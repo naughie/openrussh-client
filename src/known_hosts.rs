@@ -15,13 +15,13 @@ use std::path::Path;
 
 pub struct KnownHostsHandler {
     /// Guaranteed not to contain `PubkeySigAlg::Other`.
-    pubkeys: Option<Vec<(PubkeySigAlg, Fingerprint)>>,
+    pubkeys: Option<Vec<(SigAlg, Fingerprint)>>,
     /// Guaranteed not to contain `CertSigAlg::Other`.
-    cas: Option<(Vec<(CertSigAlg, Fingerprint)>, String)>,
+    cas: Option<(Vec<(SigAlg, Fingerprint)>, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum PubkeySigAlg {
+enum SigAlg {
     Ed25519,
     EcdsaSha2NistP521,
     EcdsaSha2NistP384,
@@ -31,7 +31,7 @@ enum PubkeySigAlg {
     Other,
 }
 
-impl PubkeySigAlg {
+impl SigAlg {
     fn from(alg: &Algorithm) -> Self {
         use ssh_key::EcdsaCurve;
 
@@ -79,31 +79,6 @@ impl PubkeySigAlg {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum CertSigAlg {
-    SkEd25519,
-    SkEcdsaSha2NistP256,
-    Other,
-}
-
-impl CertSigAlg {
-    fn from(alg: &Algorithm) -> Self {
-        match alg {
-            Algorithm::SkEd25519 => Self::SkEd25519,
-            Algorithm::SkEcdsaSha2NistP256 => Self::SkEcdsaSha2NistP256,
-            _ => Self::Other,
-        }
-    }
-
-    fn to_alg(self) -> Algorithm {
-        match self {
-            Self::SkEd25519 => Algorithm::SkEd25519,
-            Self::SkEcdsaSha2NistP256 => Algorithm::SkEcdsaSha2NistP256,
-            Self::Other => unreachable!(),
-        }
-    }
-}
-
 impl KnownHostsHandler {
     pub fn new(known_hosts: &KnownHosts, host: &str, port: u16) -> Self {
         fn collect<T>(it: impl Iterator<Item = T>) -> Option<Vec<T>> {
@@ -132,9 +107,9 @@ impl KnownHostsHandler {
         let mut pubkeys = collect(known_hosts.public_keys.iter().filter_map(|entry| {
             if host_matched_known_hosts(&host, port_str, entry.host_patterns()) {
                 let pubkey = entry.public_key();
-                let alg = PubkeySigAlg::from(&pubkey.algorithm());
+                let alg = SigAlg::from(&pubkey.algorithm());
 
-                (alg != PubkeySigAlg::Other)
+                (alg != SigAlg::Other)
                     .then(|| (alg, Fingerprint::new(HashAlg::Sha256, pubkey.key_data())))
             } else {
                 None
@@ -147,9 +122,9 @@ impl KnownHostsHandler {
         let cas = collect(known_hosts.cas.iter().filter_map(|(entry, _)| {
             if host_matched_known_hosts(&host, port_str, entry.host_patterns()) {
                 let pubkey = entry.public_key();
-                let alg = CertSigAlg::from(&pubkey.algorithm());
+                let alg = SigAlg::from(&pubkey.algorithm());
 
-                (alg != CertSigAlg::Other)
+                (alg != SigAlg::Other)
                     .then(|| (alg, Fingerprint::new(HashAlg::Sha256, pubkey.key_data())))
             } else {
                 None
@@ -165,7 +140,7 @@ impl KnownHostsHandler {
 
     pub fn check_public_key(&self, pubkey: &PublicKey) -> MatchResult {
         if let Some(pubkeys) = &self.pubkeys {
-            let alg = PubkeySigAlg::from(&pubkey.algorithm());
+            let alg = SigAlg::from(&pubkey.algorithm());
             let fp = Fingerprint::new(HashAlg::Sha256, pubkey.key_data());
             if pubkeys.binary_search(&(alg, fp)).is_ok() {
                 MatchResult::Found
@@ -228,7 +203,7 @@ impl KnownHostsHandler {
             let mut new_algs = dedup(pubkeys.iter().map(|(alg, _)| alg.to_alg()));
 
             for alg in config.key.iter() {
-                let alg_key = PubkeySigAlg::from(alg);
+                let alg_key = SigAlg::from(alg);
                 if pubkeys
                     .binary_search_by_key(&alg_key, |(alg, _)| *alg)
                     .is_err()
@@ -244,7 +219,7 @@ impl KnownHostsHandler {
             let mut new_algs = dedup(cas.iter().map(|(alg, _)| alg.to_alg()));
 
             for alg in config.host_key_certificates.iter() {
-                let alg_key = CertSigAlg::from(alg);
+                let alg_key = SigAlg::from(alg);
                 if cas.binary_search_by_key(&alg_key, |(alg, _)| *alg).is_err() {
                     new_algs.push(alg.clone());
                 }
