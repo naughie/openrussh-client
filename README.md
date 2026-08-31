@@ -17,9 +17,24 @@ Supported directives:
 - `CertificateFile`
 
 
-# Host key algorithms
+## SSH Features
 
-We deliberately support only the following host key algorithms:
+We do not support X11 forwarding and agent forwarding for the security reason.
+
+Plan to support:
+
+- Local port forwarding (OpenSSH's `-L` option)
+- Local socket forwarding (OpenSSH's `-L` option)
+- Remote port forwarding (OpenSSH's `-R` option)
+- Remote socket forwarding (OpenSSH's `-R` option)
+- PTY
+- Limited support for FIDO2
+- More flexible configuration of combination of `IdentityFile` / `CertificateFile` and `IdentityAgent`
+
+
+# Digital Signature Algorithms
+
+We deliberately support only the following host key / certificate algorithms when reading `known_hosts`:
 
 - ssh-ed25519
 - ecdsa-sha2-nistp521
@@ -36,8 +51,10 @@ We deliberately support only the following host key algorithms:
 ```toml
 [dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
-openrussh-client = { path = "../russh-client" }
+openrussh-client = { path = "../openrussh-client" }
 ```
+
+`src/main.rs`:
 
 ```rust
 use openrussh_client::config::Target;
