@@ -1,0 +1,32 @@
+[package]
+name = "openrussh-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+russh = { version = "0.63", default-features = false }
+ssh2-config = "0.7"
+tokio = { version = "1", features = ["io-util"] }
+whoami = "2.1"
+
+glob = { version =  "0.3", optional = true }
+hmac = { version =  "0.13", optional = true }
+sha1 = { version =  "0.11", optional = true }
+
+bytes = { version = "1", optional = true }
+
+[features]
+default = ["russh-default", "known-hosts", "cmd"]
+
+russh-default = ["russh/aws-lc-rs", "russh/rsa", "russh/flate2"]
+
+aws-lc-rs = ["russh/aws-lc-rs"]
+ring = ["russh/ring"]
+
+rsa = ["russh/rsa"]
+flate2 = ["russh/flate2"]
+serde = ["russh/serde"]
+
+known-hosts = ["dep:glob", "dep:hmac", "dep:sha1"]
+
+cmd = ["dep:bytes"]
