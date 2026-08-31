@@ -7,6 +7,7 @@ pub use russh::keys::known_hosts as russh_known_hosts;
 use russh::keys::ssh_key;
 
 use ssh_key::known_hosts::{Entry, HostPatterns, Marker};
+use ssh_key::public::KeyData;
 use ssh_key::{Algorithm, HashAlg};
 use ssh_key::{Certificate, Fingerprint, PublicKey};
 
@@ -54,7 +55,7 @@ impl SigAlg {
         }
     }
 
-    fn to_alg(self) -> Algorithm {
+    const fn to_alg(self) -> Algorithm {
         use ssh_key::EcdsaCurve;
 
         match self {
@@ -139,9 +140,12 @@ impl KnownHostsHandler {
     }
 
     pub fn check_public_key(&self, pubkey: &PublicKey) -> MatchResult {
+        self.check_public_key_impl(pubkey.key_data(), SigAlg::from(&pubkey.algorithm()))
+    }
+
+    fn check_public_key_impl(&self, pubkey: &KeyData, alg: SigAlg) -> MatchResult {
         if let Some(pubkeys) = &self.pubkeys {
-            let alg = SigAlg::from(&pubkey.algorithm());
-            let fp = Fingerprint::new(HashAlg::Sha256, pubkey.key_data());
+            let fp = Fingerprint::new(HashAlg::Sha256, pubkey);
             if pubkeys.binary_search(&(alg, fp)).is_ok() {
                 MatchResult::Found
             } else {
@@ -166,7 +170,7 @@ impl KnownHostsHandler {
             if cert.validate(cas).is_ok() {
                 MatchResult::Found
             } else {
-                MatchResult::CertNotVerified
+                self.check_public_key_impl(cert.public_key(), SigAlg::from(&cert.algorithm()))
             }
         } else {
             MatchResult::CertNotVerified
@@ -215,18 +219,16 @@ impl KnownHostsHandler {
             config.key = Cow::Owned(new_algs);
         }
 
-        if let Some((cas, _)) = &self.cas {
-            let mut new_algs = dedup(cas.iter().map(|(alg, _)| alg.to_alg()));
+        const PREFERRED: &[Algorithm] = &[
+            SigAlg::Ed25519.to_alg(),
+            SigAlg::EcdsaSha2NistP521.to_alg(),
+            SigAlg::EcdsaSha2NistP256.to_alg(),
+            SigAlg::EcdsaSha2NistP256.to_alg(),
+            SigAlg::RsaSha512.to_alg(),
+            SigAlg::RsaSha256.to_alg(),
+        ];
 
-            for alg in config.host_key_certificates.iter() {
-                let alg_key = SigAlg::from(alg);
-                if cas.binary_search_by_key(&alg_key, |(alg, _)| *alg).is_err() {
-                    new_algs.push(alg.clone());
-                }
-            }
-
-            config.host_key_certificates = Cow::Owned(new_algs);
-        }
+        config.host_key_certificates = Cow::Borrowed(PREFERRED);
     }
 }
 
