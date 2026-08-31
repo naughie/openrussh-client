@@ -228,8 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("status = {status}");
     }
 
-    conn.handle()
-        .disconnect(Disconnect::ByApplication, "Done successfully", "en")
+    conn.disconnect(Disconnect::ByApplication, "Done successfully", "en")
         .await?;
 
     Ok(())
