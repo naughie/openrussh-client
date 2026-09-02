@@ -10,6 +10,11 @@ For example, while OpenSSH fallbacks to the default key paths (`~/.ssh/id_XXX` e
 We do *recognize* OpenSSH but do not *behave* as OpenSSH. That does not mean you cannot use the OpenRussh client as the OpenSSH duplication.
 
 
+## Disclaimer
+
+**Disclaimer**: This software is provided "as is," without warranty of any kind, express or implied. It may include insecure implementations, and it is not guaranteed to follow timely security updates. Use this library at your own risk, and do not use it in production environments or systems requiring strict security guarantees.
+
+
 # OpenSSH Config
 
 Supported directives:
