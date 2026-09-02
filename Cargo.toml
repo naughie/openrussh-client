@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 russh = { version = "0.63", default-features = false }
 ssh2-config = "0.7"
-tokio = { version = "1", features = ["io-util"] }
+tokio = { version = "1", features = ["io-util", "net"] }
 whoami = "2.1"
 
 glob = { version =  "0.3", optional = true }

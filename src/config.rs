@@ -55,8 +55,10 @@ pub struct Dest {
 
 #[derive(Debug, Clone)]
 pub struct Auth {
-    pub auth_methods: Option<Box<[AuthMethod]>>,
+    pub identities: Option<Vec<PathBuf>>,
     pub cert: Option<PathBuf>,
+    pub agent: Option<PathBuf>,
+    pub identities_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -152,13 +154,11 @@ fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Err
             whoami::username().map_err(Error::UserNotFound)?
         };
 
-        let auth_methods = parse_auth_methods(params);
-
-        let cert = params.certificate_file.take().and_then(expand_tilde);
+        let auth = parse_auth_methods(params);
 
         Ok(Host {
             dest: Dest { name, port, user },
-            auth: Auth { auth_methods, cert },
+            auth,
         })
     }
 
@@ -242,7 +242,7 @@ fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
     }
 }
 
-fn parse_auth_methods(conf: &mut OpenSshHost) -> Option<Box<[AuthMethod]>> {
+fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
     fn agent_from_env(env: &str) -> Option<PathBuf> {
         std::env::var_os(env).and_then(|value| expand_tilde(value.into()))
     }
@@ -259,30 +259,29 @@ fn parse_auth_methods(conf: &mut OpenSshHost) -> Option<Box<[AuthMethod]>> {
         }
     }
 
+    let identities = conf
+        .identity_file
+        .take()
+        .map(|v| v.into_iter().filter_map(expand_tilde).collect::<Vec<_>>());
+
+    let cert = conf.certificate_file.take().and_then(expand_tilde);
+
     let agent = conf
         .unsupported_fields
         .remove("identityagent")
         .and_then(|mut v| (!v.is_empty()).then(|| v.swap_remove(0)))
         .and_then(parse_agent)
-        .or_else(|| agent_from_env(AGENT_ENV))
-        .map(AuthMethod::Agent);
+        .or_else(|| agent_from_env(AGENT_ENV));
 
-    if let Some(identity_files) = conf.identity_file.take()
-        && !identity_files.is_empty()
-    {
-        let mut methods = Vec::with_capacity(identity_files.len() + 1);
+    let identities_only = conf
+        .unsupported_fields
+        .get("identitiesonly")
+        .is_some_and(|v| v.first().is_some_and(|v| v == "yes"));
 
-        if let Some(agent) = agent {
-            methods.push(agent);
-        }
-        for key in identity_files {
-            if let Some(key) = expand_tilde(key) {
-                methods.push(AuthMethod::LocalKey(key));
-            }
-        }
-
-        Some(methods.into_boxed_slice())
-    } else {
-        agent.map(|agent| Box::from([agent]))
+    Auth {
+        identities,
+        cert,
+        agent,
+        identities_only,
     }
 }

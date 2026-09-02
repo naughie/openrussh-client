@@ -2,6 +2,8 @@ pub mod error;
 
 pub mod config;
 
+pub mod auth;
+
 pub mod connect;
 
 #[cfg(feature = "known-hosts")]

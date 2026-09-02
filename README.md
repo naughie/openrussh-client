@@ -22,9 +22,10 @@ Supported directives:
 - `Host`
 - `Port`
 - `User`
-- `IdentityFile`
+- `IdentityFile` (limitation: use the first `IdentityFile` only)
 - `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
 - `CertificateFile`
+- `IdentitiesOnly`
 
 
 ## SSH Features
@@ -39,7 +40,6 @@ Plan to support:
 - Remote socket forwarding (OpenSSH's `-R` option)
 - PTY
 - Limited support for FIDO2
-- More flexible configuration of combination of `IdentityFile` / `CertificateFile` and `IdentityAgent`
 
 
 # Digital Signature Algorithms

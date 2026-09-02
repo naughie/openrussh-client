@@ -1,5 +1,6 @@
+pub use crate::auth::Error as AuthError;
 pub use crate::config::Error as ConfigParseError;
-pub use crate::connect::{AuthError, Error as ConnectError};
+pub use crate::connect::Error as ConnectError;
 
 use russh::client::Handler;
 use std::error::Error as StdError;
@@ -29,8 +30,17 @@ impl StdError for ConfigParseError {
 impl Display for AuthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NoPrivateKey => write!(f, "Private key is not configured"),
+            Self::NoIdentityFilter => write!(
+                f,
+                "`IdentitiesOnly` is `yes`, but no valid `IdentityFile` are found"
+            ),
             Self::LoadPrivkey(e) => write!(f, "Could not load IdentityFile: {e}"),
             Self::LoadCert(e) => write!(f, "Could not load CertificateFile: {e}"),
+            Self::PubkeyMismatch => write!(
+                f,
+                "Public keys from `IdentityFile` and `CertificateFile` are mismatched"
+            ),
             Self::ConnectAgent(e) => {
                 write!(f, "Failed connect to the SSH agent: {e}")
             }
@@ -57,6 +67,8 @@ impl StdError for AuthError {
             Self::RequestAgent(e) => Some(e),
             Self::Connection(e) => Some(e),
             Self::PubkeyUnsupported | Self::MultiStep => None,
+            Self::PubkeyMismatch => None,
+            Self::NoPrivateKey | Self::NoIdentityFilter => None,
         }
     }
 }
