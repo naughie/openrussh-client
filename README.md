@@ -7,7 +7,7 @@ It reads OpenSSH's `~/.ssh/config` and `~/.ssh/known_hosts`, hence "OpenRussh".
 **Important Notes**: "OpenSSH" support means the ability to recognize OpenSSH-related files.
 We do not guarantee that it works in exactly the same way as the OpenSSH client.
 For example, while OpenSSH fallbacks to the default key paths (`~/.ssh/id_XXX` etc.), we stop attempting such keys for the security reason.
-We do *recognize* OpenSSH but do not *behave* as OpenSSH.
+We do *recognize* OpenSSH but do not *behave* as OpenSSH. That does not mean you cannot use the OpenRussh client as the OpenSSH duplication.
 
 
 # OpenSSH Config
