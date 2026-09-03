@@ -3,6 +3,11 @@ name = "openrussh-client"
 version = "0.1.0"
 edition = "2024"
 
+authors = ["Masato Nakata <masaton@naughie.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/naughie/openrussh-client"
+homepage = "https://github.com/naughie/openrussh-client"
+
 [dependencies]
 russh = { version = "0.63", default-features = false }
 ssh2-config = "0.7"
