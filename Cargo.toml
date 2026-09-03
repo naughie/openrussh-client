@@ -8,6 +8,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/naughie/openrussh-client"
 homepage = "https://github.com/naughie/openrussh-client"
 
+description = "Russh client wrapper with supporting OpenSSH files"
+
 [dependencies]
 russh = { version = "0.63", default-features = false }
 ssh2-config = "0.7"
