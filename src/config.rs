@@ -202,12 +202,6 @@ fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Err
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum AuthMethod {
-    LocalKey(PathBuf),
-    Agent(PathBuf),
-}
-
 fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
     use std::path::Component;
 

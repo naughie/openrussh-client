@@ -3,9 +3,9 @@ use russh::keys::PublicKeyOrCertificate;
 use russh::{Channel, ChannelOpenFailure};
 
 use russh::Preferred;
-pub use russh::keys::known_hosts as russh_known_hosts;
 use russh::keys::ssh_key;
 
+pub use ssh_key::known_hosts as openssh_known_hosts;
 use ssh_key::known_hosts::{Entry, HostPatterns, Marker};
 use ssh_key::public::KeyData;
 use ssh_key::{Algorithm, HashAlg};
