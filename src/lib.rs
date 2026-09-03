@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 //! # OpenRussh Client
 //!
 //! OpenRussh client is an implementation of a SSH client using the [Russh](russh) crate.
