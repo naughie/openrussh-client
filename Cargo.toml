@@ -9,7 +9,7 @@ repository = "https://github.com/naughie/openrussh-client"
 homepage = "https://github.com/naughie/openrussh-client"
 
 keywords = ["asnyc", "crypto", "openssh", "ssh"]
-categories = ["asynchronous", "authentication", "cryptography", "encoding", "no-std", "parser-implementations"]
+categories = ["asynchronous", "authentication", "cryptography"]
 
 description = "Russh client wrapper with supporting OpenSSH files"
 
