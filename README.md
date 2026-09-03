@@ -22,7 +22,7 @@ Supported directives:
 - `Host`
 - `Port`
 - `User`
-- `IdentityFile` (limitation: use the first `IdentityFile` only)
+- `IdentityFile` (limitation: use the first `IdentityFile` only even if you specify multiple items)
 - `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
 - `CertificateFile`
 - `IdentitiesOnly`
@@ -61,7 +61,7 @@ We deliberately support only the following host key / certificate algorithms whe
 ```toml
 [dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
-openrussh-client = { path = "../openrussh-client" }
+openrussh-client = "0.1"
 ```
 
 `src/main.rs`:
