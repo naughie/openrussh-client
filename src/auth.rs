@@ -111,6 +111,15 @@ mod helper {
     use std::path::Path;
     use std::sync::Arc;
 
+    #[cfg(not(feature = "rsa"))]
+    pub(super) async fn find_hash_alg<H: Handler>(
+        _key_alg: Algorithm,
+        _handle: &mut Handle<H>,
+    ) -> Result<Option<HashAlg>, Error> {
+        Ok(None)
+    }
+
+    #[cfg(feature = "rsa")]
     pub(super) async fn find_hash_alg<H: Handler>(
         key_alg: Algorithm,
         handle: &mut Handle<H>,

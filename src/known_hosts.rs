@@ -27,7 +27,9 @@ enum SigAlg {
     EcdsaSha2NistP521,
     EcdsaSha2NistP384,
     EcdsaSha2NistP256,
+    #[cfg(feature = "rsa")]
     RsaSha512,
+    #[cfg(feature = "rsa")]
     RsaSha256,
     Other,
 }
@@ -47,9 +49,11 @@ impl SigAlg {
             Algorithm::Ecdsa {
                 curve: EcdsaCurve::NistP256,
             } => Self::EcdsaSha2NistP256,
+            #[cfg(feature = "rsa")]
             Algorithm::Rsa {
                 hash: Some(HashAlg::Sha512),
             } => Self::RsaSha512,
+            #[cfg(feature = "rsa")]
             Algorithm::Rsa { hash: _ } => Self::RsaSha256,
             _ => Self::Other,
         }
@@ -69,9 +73,11 @@ impl SigAlg {
             Self::EcdsaSha2NistP256 => Algorithm::Ecdsa {
                 curve: EcdsaCurve::NistP256,
             },
+            #[cfg(feature = "rsa")]
             Self::RsaSha512 => Algorithm::Rsa {
                 hash: Some(HashAlg::Sha512),
             },
+            #[cfg(feature = "rsa")]
             Self::RsaSha256 => Algorithm::Rsa {
                 hash: Some(HashAlg::Sha256),
             },
@@ -224,7 +230,9 @@ impl KnownHostsHandler {
             SigAlg::EcdsaSha2NistP521.to_alg(),
             SigAlg::EcdsaSha2NistP256.to_alg(),
             SigAlg::EcdsaSha2NistP256.to_alg(),
+            #[cfg(feature = "rsa")]
             SigAlg::RsaSha512.to_alg(),
+            #[cfg(feature = "rsa")]
             SigAlg::RsaSha256.to_alg(),
         ];
 
