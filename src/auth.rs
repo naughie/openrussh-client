@@ -537,6 +537,12 @@ pub fn check_pub_or_priv(path: &Path) -> KeyType {
         }
     }
 
+    if let Some(ext) = path.extension()
+        && ext == "pub"
+    {
+        return KeyType::MaybePublic;
+    }
+
     check_impl(path).unwrap_or(KeyType::Error)
 }
 
