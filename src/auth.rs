@@ -14,6 +14,7 @@ use tokio::net::UnixStream;
 use either::Either;
 
 use std::path::Path;
+use std::path::PathBuf;
 
 /// The authentication error. It is likely to mean unexpected, unrecoverable errors, rather than the
 /// authentication failure.
@@ -537,8 +538,56 @@ impl ExactSizeIterator for AuthMethodsIter<'_, '_> {
 
 impl Default for AuthMethods<'_> {
     fn default() -> Self {
-        Self {
-            inner: Either::Left(AuthMethod::None),
+        Self::singleton(AuthMethod::None)
+    }
+}
+
+enum ConfigState<'a> {
+    AgentFiltered {
+        agent: &'a Path,
+        identities: &'a [PathBuf],
+        cert: Option<&'a Path>,
+    },
+    AgentFilteredEmpty,
+    AgentFull {
+        agent: &'a Path,
+        identities: Option<&'a [PathBuf]>,
+        cert: Option<&'a Path>,
+    },
+    NoAgent {
+        identities: &'a [PathBuf],
+        cert: Option<&'a Path>,
+    },
+    NoAgentEmpty,
+}
+
+impl<'a> ConfigState<'a> {
+    fn from_config(auth: &'a AuthConfig) -> Self {
+        let identities = auth.identities.as_deref();
+        let cert = auth.cert.as_deref();
+
+        if let Some(agent) = &auth.agent {
+            if auth.identities_only {
+                if let Some(identities) = identities {
+                    Self::AgentFiltered {
+                        agent,
+                        identities,
+                        cert,
+                    }
+                } else {
+                    Self::AgentFilteredEmpty
+                }
+            } else {
+                Self::AgentFull {
+                    agent,
+                    identities,
+                    cert,
+                }
+            }
+        } else if let Some(identities) = identities {
+            Self::NoAgent { identities, cert }
+        } else {
+            Self::NoAgentEmpty
         }
     }
 }
@@ -565,50 +614,63 @@ impl<'a> AuthMethods<'a> {
         AuthMethodsIter { inner }
     }
 
+    pub fn singleton(method: AuthMethod<'a>) -> Self {
+        Self {
+            inner: Either::Left(method),
+        }
+    }
+    pub fn multiple(methods: Vec<AuthMethod<'a>>) -> Self {
+        Self {
+            inner: Either::Right(methods),
+        }
+    }
+
     fn from_config_with_none(auth: &'a AuthConfig) -> Self {
-        if let Some(agent) = &auth.agent {
-            if auth.identities_only {
-                if let Some(identities) = &auth.identities {
-                    let cert = auth.cert.as_deref();
-                    let it = identities.iter().filter_map(|identity| {
-                        Self::from_config_with_agent_filtered(identity, cert)
+        match ConfigState::from_config(auth) {
+            ConfigState::AgentFiltered {
+                agent,
+                identities,
+                cert,
+            } => {
+                let it = identities
+                    .iter()
+                    .filter_map(|identity| Self::from_config_with_agent_filtered(identity, cert));
+
+                let mut methods = vec![AuthMethod::None];
+                let mut local_methods: Option<Vec<AuthMethod>> = None;
+
+                for (agent_method, local_method) in it {
+                    methods.push(AuthMethod::Agent {
+                        agent,
+                        kind: agent_method,
                     });
 
-                    let mut methods = vec![AuthMethod::None];
-                    let mut local_methods: Option<Vec<AuthMethod>> = None;
-
-                    for (agent_method, local_method) in it {
-                        methods.push(AuthMethod::Agent {
-                            agent,
-                            kind: agent_method,
-                        });
-
-                        if let Some(local_method) = local_method {
-                            local_methods
-                                .get_or_insert_default()
-                                .push(AuthMethod::Local { kind: local_method });
-                        }
+                    if let Some(local_method) = local_method {
+                        local_methods
+                            .get_or_insert_default()
+                            .push(AuthMethod::Local { kind: local_method });
                     }
-
-                    if let Some(local_methods) = local_methods {
-                        methods.extend(local_methods);
-                    }
-
-                    Self {
-                        inner: Either::Right(methods),
-                    }
-                } else {
-                    Self::default()
                 }
-            } else {
+
+                if let Some(local_methods) = local_methods {
+                    methods.extend(local_methods);
+                }
+
+                Self::multiple(methods)
+            }
+            ConfigState::AgentFilteredEmpty => Self::default(),
+            ConfigState::AgentFull {
+                agent,
+                identities,
+                cert,
+            } => {
                 let full = AuthMethod::Agent {
                     agent,
                     kind: AuthAgentKind::Full,
                 };
                 let mut methods = vec![AuthMethod::None, full];
 
-                if let Some(identities) = &auth.identities {
-                    let cert = auth.cert.as_deref();
+                if let Some(identities) = identities {
                     let it = identities.iter().filter_map(|identity| {
                         Self::from_config_no_agent(identity, cert)
                             .map(|kind| AuthMethod::Local { kind })
@@ -616,13 +678,9 @@ impl<'a> AuthMethods<'a> {
                     methods.extend(it);
                 }
 
-                Self {
-                    inner: Either::Right(methods),
-                }
+                Self::multiple(methods)
             }
-        } else {
-            if let Some(identities) = &auth.identities {
-                let cert = auth.cert.as_deref();
+            ConfigState::NoAgent { identities, cert } => {
                 let mut it = identities.iter().filter_map(|identity| {
                     Self::from_config_no_agent(identity, cert)
                         .map(|kind| AuthMethod::Local { kind })
@@ -632,80 +690,75 @@ impl<'a> AuthMethods<'a> {
                     let mut methods = vec![AuthMethod::None, first];
                     methods.extend(it);
 
-                    Self {
-                        inner: Either::Right(methods),
-                    }
+                    Self::multiple(methods)
                 } else {
                     Self::default()
                 }
-            } else {
-                Self::default()
             }
+            ConfigState::NoAgentEmpty => Self::default(),
         }
     }
 
     fn from_config_without_none(auth: &'a AuthConfig) -> Result<Self, Error> {
-        if let Some(agent) = &auth.agent {
-            if auth.identities_only {
-                if let Some(identities) = &auth.identities {
-                    let cert = auth.cert.as_deref();
-                    let mut it = identities.iter().filter_map(|identity| {
-                        Self::from_config_with_agent_filtered(identity, cert)
-                    });
+        match ConfigState::from_config(auth) {
+            ConfigState::AgentFiltered {
+                agent,
+                identities,
+                cert,
+            } => {
+                let mut it = identities
+                    .iter()
+                    .filter_map(|identity| Self::from_config_with_agent_filtered(identity, cert));
 
-                    if let Some((first, first_loc)) = it.next() {
-                        let mut agent_methods: Option<Vec<AuthMethod>> = None;
-                        let mut local_methods: Option<Vec<AuthMethod>> = None;
+                if let Some((first, first_loc)) = it.next() {
+                    let mut agent_methods: Option<Vec<AuthMethod>> = None;
+                    let mut local_methods: Option<Vec<AuthMethod>> = None;
 
-                        if let Some(first_loc) = first_loc {
-                            agent_methods = Some(vec![]);
-                            local_methods = Some(vec![AuthMethod::Local { kind: first_loc }]);
+                    if let Some(first_loc) = first_loc {
+                        agent_methods = Some(vec![]);
+                        local_methods = Some(vec![AuthMethod::Local { kind: first_loc }]);
+                    }
+
+                    for (agent_method, local_method) in it {
+                        agent_methods
+                            .get_or_insert_with(|| vec![AuthMethod::Agent { agent, kind: first }])
+                            .push(AuthMethod::Agent {
+                                agent,
+                                kind: agent_method,
+                            });
+
+                        if let Some(local_method) = local_method {
+                            local_methods
+                                .get_or_insert_default()
+                                .push(AuthMethod::Local { kind: local_method });
+                        }
+                    }
+
+                    if let Some(mut methods) = agent_methods {
+                        if let Some(local_methods) = local_methods {
+                            methods.extend(local_methods);
                         }
 
-                        for (agent_method, local_method) in it {
-                            agent_methods
-                                .get_or_insert_with(|| {
-                                    vec![AuthMethod::Agent { agent, kind: first }]
-                                })
-                                .push(AuthMethod::Agent {
-                                    agent,
-                                    kind: agent_method,
-                                });
-
-                            if let Some(local_method) = local_method {
-                                local_methods
-                                    .get_or_insert_default()
-                                    .push(AuthMethod::Local { kind: local_method });
-                            }
-                        }
-
-                        if let Some(mut methods) = agent_methods {
-                            if let Some(local_methods) = local_methods {
-                                methods.extend(local_methods);
-                            }
-
-                            Ok(Self {
-                                inner: Either::Right(methods),
-                            })
-                        } else {
-                            Ok(Self {
-                                inner: Either::Left(AuthMethod::Agent { agent, kind: first }),
-                            })
-                        }
+                        Ok(Self::multiple(methods))
                     } else {
-                        Err(Error::NoIdentityFilter)
+                        Ok(Self::singleton(AuthMethod::Agent { agent, kind: first }))
                     }
                 } else {
                     Err(Error::NoIdentityFilter)
                 }
-            } else {
+            }
+            ConfigState::AgentFilteredEmpty => Err(Error::NoIdentityFilter),
+            ConfigState::AgentFull {
+                agent,
+                identities,
+                cert,
+            } => {
                 let full = AuthMethod::Agent {
                     agent,
                     kind: AuthAgentKind::Full,
                 };
 
-                if let Some(identities) = &auth.identities {
-                    let cert = auth.cert.as_deref();
+                if let Some(identities) = identities {
                     let mut it = identities.iter().filter_map(|identity| {
                         Self::from_config_no_agent(identity, cert)
                             .map(|kind| AuthMethod::Local { kind })
@@ -714,23 +767,15 @@ impl<'a> AuthMethods<'a> {
                     if let Some(first) = it.next() {
                         let mut methods = vec![full, first];
                         methods.extend(it);
-                        Ok(Self {
-                            inner: Either::Right(methods),
-                        })
+                        Ok(Self::multiple(methods))
                     } else {
-                        Ok(Self {
-                            inner: Either::Left(full),
-                        })
+                        Ok(Self::singleton(full))
                     }
                 } else {
-                    Ok(Self {
-                        inner: Either::Left(full),
-                    })
+                    Ok(Self::singleton(full))
                 }
             }
-        } else {
-            if let Some(identities) = &auth.identities {
-                let cert = auth.cert.as_deref();
+            ConfigState::NoAgent { identities, cert } => {
                 let mut it = identities.iter().filter_map(|identity| {
                     Self::from_config_no_agent(identity, cert)
                         .map(|kind| AuthMethod::Local { kind })
@@ -740,20 +785,15 @@ impl<'a> AuthMethods<'a> {
                     if let Some(second) = it.next() {
                         let mut methods = vec![first, second];
                         methods.extend(it);
-                        Ok(Self {
-                            inner: Either::Right(methods),
-                        })
+                        Ok(Self::multiple(methods))
                     } else {
-                        Ok(Self {
-                            inner: Either::Left(first),
-                        })
+                        Ok(Self::singleton(first))
                     }
                 } else {
                     Err(Error::NoPrivateKey)
                 }
-            } else {
-                Err(Error::NoPrivateKey)
             }
+            ConfigState::NoAgentEmpty => Err(Error::NoPrivateKey),
         }
     }
 
