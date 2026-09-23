@@ -1,6 +1,6 @@
 [package]
 name = "openrussh-client"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 
 authors = ["Masato Nakata <masaton@naughie.com>"]
@@ -24,6 +24,8 @@ hmac = { version =  "0.13", optional = true }
 sha1 = { version =  "0.11", optional = true }
 
 bytes = { version = "1", optional = true }
+
+either = "1.18"
 
 [features]
 default = ["russh-default", "known-hosts", "cmd"]

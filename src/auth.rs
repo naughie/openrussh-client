@@ -11,6 +11,8 @@ use russh::keys::agent::client::{AgentClient, AgentStream};
 
 use tokio::net::UnixStream;
 
+use either::Either;
+
 use std::path::Path;
 
 /// The authentication error. It is likely to mean unexpected, unrecoverable errors, rather than the
@@ -293,10 +295,7 @@ impl<'a, H: Handler> Authenticator<'a, H, ()> {
     /// Performs authentication. It automatically calls [`Authenticator::load_agent()`] with the
     /// `agent` (if any) given by the `method`.
     ///
-    /// It then invokes an individual authentication method on [`Authenticator`].
-    ///
-    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
-    /// while `Err` suggests that you stop the authentication immediately.
+    /// It is an alias of [`auth()`].
     pub async fn perform(&mut self, method: AuthMethod<'_>) -> Result<AuthResult, Error> {
         self::auth(self.handle, self.user, method).await
     }
@@ -477,109 +476,334 @@ pub enum AuthLocalKind<'a> {
 /// Connects to an SSH agent to sign the payload.
 #[derive(Debug, Clone, Copy)]
 pub enum AuthAgentKind<'a> {
-    /// Tries all the identities returned by [`AgentClient::request_identities()`] first, then
-    /// fallback to [`AuthLocalKind`].
-    Full { fallback: Option<AuthLocalKind<'a>> },
-    /// Uses the public key, extracted from the given private key, signed by the SSH agent. Fallback
-    /// to [`AuthLocalKind::LocalPriv`].
+    /// Tries all the identities returned by [`AgentClient::request_identities()`].
+    Full,
+    /// Uses the public key, extracted from the given private key, signed by the SSH agent.
     LocalPriv { priv_key: &'a Path },
     /// Uses the public key, signed by the SSH agent.
     LocalPub { pub_key: &'a Path },
     /// Uses the certificate, signed by the SSH agent. The private key is used only for checking the
     /// public key matching (i.e., checking if the public key in the certificate and that from the
-    /// private key are equal). Fallback to [`AuthLocalKind::LocalCert`].
+    /// private key are equal).
     LocalCertPriv { cert: &'a Path, priv_key: &'a Path },
     /// Uses the certificate, signed by the SSH agent. The public key is used only for checking if
     /// the public key in the certificate coincides the given public key.
     LocalCertPub { cert: &'a Path, pub_key: &'a Path },
 }
 
-/// Authentication methods.
+/// Authentication method.
 #[derive(Debug, Clone, Copy)]
 pub enum AuthMethod<'a> {
+    /// Corresponds to the authentication method `none`.
+    None,
     /// Uses local keys only (no SSH agent).
     Local { kind: AuthLocalKind<'a> },
-    /// Uses an SSH agent with or without local files as fallback.
+    /// Uses an SSH agent.
     Agent {
         agent: &'a Path,
         kind: AuthAgentKind<'a>,
     },
 }
 
-impl<'a> AuthMethod<'a> {
-    /// Converts the OpenSSH configurations to an [`AuthMethod`].
-    pub fn from_config(auth: &'a AuthConfig) -> Result<Self, Error> {
+/// The stack of the [`AuthMethod`].
+pub struct AuthMethods<'a> {
+    inner: Either<AuthMethod<'a>, Vec<AuthMethod<'a>>>,
+}
+
+/// Iterator of [`AuthMethod`]s, returned by [`AuthMethods::iter()`].
+pub struct AuthMethodsIter<'a, 'b> {
+    inner: Either<
+        std::iter::Once<AuthMethod<'a>>,
+        std::iter::Copied<std::slice::Iter<'b, AuthMethod<'a>>>,
+    >,
+}
+
+impl<'a> Iterator for AuthMethodsIter<'a, '_> {
+    type Item = AuthMethod<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        <_ as Iterator>::next(&mut self.inner)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        <_ as Iterator>::size_hint(&self.inner)
+    }
+}
+impl ExactSizeIterator for AuthMethodsIter<'_, '_> {
+    fn len(&self) -> usize {
+        <_ as ExactSizeIterator>::len(&self.inner)
+    }
+}
+
+impl Default for AuthMethods<'_> {
+    fn default() -> Self {
+        Self {
+            inner: Either::Left(AuthMethod::None),
+        }
+    }
+}
+
+impl<'a> AuthMethods<'a> {
+    /// Converts the OpenSSH configurations to an [`AuthMethods`].
+    ///
+    /// If `includes_none` is true, then the authentication method `none` comes first in the authentication
+    /// stack. If false, then we interpret the config as-is.
+    pub fn from_config(auth: &'a AuthConfig, includes_none: bool) -> Self {
+        if includes_none {
+            Self::from_config_with_none(auth)
+        } else {
+            Self::from_config_without_none(auth).unwrap_or_default()
+        }
+    }
+
+    /// Iterates over the [`AuthMethod`] in the authentication stack.
+    pub fn iter(&self) -> AuthMethodsIter<'a, '_> {
+        let inner = match &self.inner {
+            &Either::Left(inner) => Either::Left(std::iter::once(inner)),
+            Either::Right(inner) => Either::Right(inner.iter().copied()),
+        };
+        AuthMethodsIter { inner }
+    }
+
+    fn from_config_with_none(auth: &'a AuthConfig) -> Self {
         if let Some(agent) = &auth.agent {
             if auth.identities_only {
-                if let Some(path) = auth.identities.as_ref().and_then(|v| v.first()) {
-                    match (check_pub_or_priv(path), &auth.cert) {
-                        (KeyType::Error, _) => Err(Error::NoIdentityFilter),
-                        (KeyType::MaybePrivate, Some(cert)) => Ok(AuthMethod::Agent {
+                if let Some(identities) = &auth.identities {
+                    let cert = auth.cert.as_deref();
+                    let it = identities.iter().filter_map(|identity| {
+                        Self::from_config_with_agent_filtered(identity, cert)
+                    });
+
+                    let mut methods = vec![AuthMethod::None];
+                    let mut local_methods: Option<Vec<AuthMethod>> = None;
+
+                    for (agent_method, local_method) in it {
+                        methods.push(AuthMethod::Agent {
                             agent,
-                            kind: AuthAgentKind::LocalCertPriv {
-                                cert,
-                                priv_key: path,
-                            },
-                        }),
-                        (KeyType::MaybePrivate, None) => Ok(AuthMethod::Agent {
-                            agent,
-                            kind: AuthAgentKind::LocalPriv { priv_key: path },
-                        }),
-                        (KeyType::MaybePublic, Some(cert)) => Ok(AuthMethod::Agent {
-                            agent,
-                            kind: AuthAgentKind::LocalCertPub {
-                                cert,
-                                pub_key: path,
-                            },
-                        }),
-                        (KeyType::MaybePublic, None) => Ok(AuthMethod::Agent {
-                            agent,
-                            kind: AuthAgentKind::LocalPub { pub_key: path },
-                        }),
+                            kind: agent_method,
+                        });
+
+                        if let Some(local_method) = local_method {
+                            local_methods
+                                .get_or_insert_default()
+                                .push(AuthMethod::Local { kind: local_method });
+                        }
+                    }
+
+                    if let Some(local_methods) = local_methods {
+                        methods.extend(local_methods);
+                    }
+
+                    Self {
+                        inner: Either::Right(methods),
+                    }
+                } else {
+                    Self::default()
+                }
+            } else {
+                let full = AuthMethod::Agent {
+                    agent,
+                    kind: AuthAgentKind::Full,
+                };
+                let mut methods = vec![AuthMethod::None, full];
+
+                if let Some(identities) = &auth.identities {
+                    let cert = auth.cert.as_deref();
+                    let it = identities.iter().filter_map(|identity| {
+                        Self::from_config_no_agent(identity, cert)
+                            .map(|kind| AuthMethod::Local { kind })
+                    });
+                    methods.extend(it);
+                }
+
+                Self {
+                    inner: Either::Right(methods),
+                }
+            }
+        } else {
+            if let Some(identities) = &auth.identities {
+                let cert = auth.cert.as_deref();
+                let mut it = identities.iter().filter_map(|identity| {
+                    Self::from_config_no_agent(identity, cert)
+                        .map(|kind| AuthMethod::Local { kind })
+                });
+
+                if let Some(first) = it.next() {
+                    let mut methods = vec![AuthMethod::None, first];
+                    methods.extend(it);
+
+                    Self {
+                        inner: Either::Right(methods),
+                    }
+                } else {
+                    Self::default()
+                }
+            } else {
+                Self::default()
+            }
+        }
+    }
+
+    fn from_config_without_none(auth: &'a AuthConfig) -> Result<Self, Error> {
+        if let Some(agent) = &auth.agent {
+            if auth.identities_only {
+                if let Some(identities) = &auth.identities {
+                    let cert = auth.cert.as_deref();
+                    let mut it = identities.iter().filter_map(|identity| {
+                        Self::from_config_with_agent_filtered(identity, cert)
+                    });
+
+                    if let Some((first, first_loc)) = it.next() {
+                        let mut agent_methods: Option<Vec<AuthMethod>> = None;
+                        let mut local_methods: Option<Vec<AuthMethod>> = None;
+
+                        if let Some(first_loc) = first_loc {
+                            agent_methods = Some(vec![]);
+                            local_methods = Some(vec![AuthMethod::Local { kind: first_loc }]);
+                        }
+
+                        for (agent_method, local_method) in it {
+                            agent_methods
+                                .get_or_insert_with(|| {
+                                    vec![AuthMethod::Agent { agent, kind: first }]
+                                })
+                                .push(AuthMethod::Agent {
+                                    agent,
+                                    kind: agent_method,
+                                });
+
+                            if let Some(local_method) = local_method {
+                                local_methods
+                                    .get_or_insert_default()
+                                    .push(AuthMethod::Local { kind: local_method });
+                            }
+                        }
+
+                        if let Some(mut methods) = agent_methods {
+                            if let Some(local_methods) = local_methods {
+                                methods.extend(local_methods);
+                            }
+
+                            Ok(Self {
+                                inner: Either::Right(methods),
+                            })
+                        } else {
+                            Ok(Self {
+                                inner: Either::Left(AuthMethod::Agent { agent, kind: first }),
+                            })
+                        }
+                    } else {
+                        Err(Error::NoIdentityFilter)
                     }
                 } else {
                     Err(Error::NoIdentityFilter)
                 }
             } else {
-                let fallback = if let Some(path) = auth.identities.as_ref().and_then(|v| v.first())
-                {
-                    match (check_pub_or_priv(path), &auth.cert) {
-                        (KeyType::Error | KeyType::MaybePublic, _) => None,
-                        (KeyType::MaybePrivate, Some(cert)) => Some(AuthLocalKind::LocalCert {
-                            cert,
-                            priv_key: path,
-                        }),
-                        (KeyType::MaybePrivate, None) => {
-                            Some(AuthLocalKind::LocalPriv { priv_key: path })
-                        }
-                    }
-                } else {
-                    None
+                let full = AuthMethod::Agent {
+                    agent,
+                    kind: AuthAgentKind::Full,
                 };
 
-                Ok(AuthMethod::Agent {
-                    agent,
-                    kind: AuthAgentKind::Full { fallback },
-                })
+                if let Some(identities) = &auth.identities {
+                    let cert = auth.cert.as_deref();
+                    let mut it = identities.iter().filter_map(|identity| {
+                        Self::from_config_no_agent(identity, cert)
+                            .map(|kind| AuthMethod::Local { kind })
+                    });
+
+                    if let Some(first) = it.next() {
+                        let mut methods = vec![full, first];
+                        methods.extend(it);
+                        Ok(Self {
+                            inner: Either::Right(methods),
+                        })
+                    } else {
+                        Ok(Self {
+                            inner: Either::Left(full),
+                        })
+                    }
+                } else {
+                    Ok(Self {
+                        inner: Either::Left(full),
+                    })
+                }
             }
         } else {
-            if let Some(path) = auth.identities.as_ref().and_then(|v| v.first())
-                && check_pub_or_priv(path) == KeyType::MaybePrivate
-            {
-                if let Some(cert) = &auth.cert {
-                    Ok(Self::Local {
-                        kind: AuthLocalKind::LocalCert {
-                            cert,
-                            priv_key: path,
-                        },
-                    })
+            if let Some(identities) = &auth.identities {
+                let cert = auth.cert.as_deref();
+                let mut it = identities.iter().filter_map(|identity| {
+                    Self::from_config_no_agent(identity, cert)
+                        .map(|kind| AuthMethod::Local { kind })
+                });
+
+                if let Some(first) = it.next() {
+                    if let Some(second) = it.next() {
+                        let mut methods = vec![first, second];
+                        methods.extend(it);
+                        Ok(Self {
+                            inner: Either::Right(methods),
+                        })
+                    } else {
+                        Ok(Self {
+                            inner: Either::Left(first),
+                        })
+                    }
                 } else {
-                    Ok(Self::Local {
-                        kind: AuthLocalKind::LocalPriv { priv_key: path },
-                    })
+                    Err(Error::NoPrivateKey)
                 }
             } else {
                 Err(Error::NoPrivateKey)
+            }
+        }
+    }
+
+    fn from_config_no_agent(
+        identity: &'a Path,
+        cert: Option<&'a Path>,
+    ) -> Option<AuthLocalKind<'a>> {
+        if check_pub_or_priv(identity) == KeyType::MaybePrivate {
+            if let Some(cert) = cert {
+                Some(AuthLocalKind::LocalCert {
+                    cert,
+                    priv_key: identity,
+                })
+            } else {
+                Some(AuthLocalKind::LocalPriv { priv_key: identity })
+            }
+        } else {
+            None
+        }
+    }
+
+    fn from_config_with_agent_filtered(
+        identity: &'a Path,
+        cert: Option<&'a Path>,
+    ) -> Option<(AuthAgentKind<'a>, Option<AuthLocalKind<'a>>)> {
+        match (check_pub_or_priv(identity), cert) {
+            (KeyType::Error, _) => None,
+            (KeyType::MaybePrivate, Some(cert)) => Some((
+                AuthAgentKind::LocalCertPriv {
+                    cert,
+                    priv_key: identity,
+                },
+                Some(AuthLocalKind::LocalCert {
+                    cert,
+                    priv_key: identity,
+                }),
+            )),
+            (KeyType::MaybePrivate, None) => Some((
+                AuthAgentKind::LocalPriv { priv_key: identity },
+                Some(AuthLocalKind::LocalPriv { priv_key: identity }),
+            )),
+            (KeyType::MaybePublic, Some(cert)) => Some((
+                AuthAgentKind::LocalCertPub {
+                    cert,
+                    pub_key: identity,
+                },
+                None,
+            )),
+            (KeyType::MaybePublic, None) => {
+                Some((AuthAgentKind::LocalPub { pub_key: identity }, None))
             }
         }
     }
@@ -651,6 +875,10 @@ pub async fn auth<H: Handler>(
     method: AuthMethod<'_>,
 ) -> Result<AuthResult, Error> {
     match method {
+        AuthMethod::None => {
+            let mut auth = Authenticator::new(handle, user);
+            auth.none().await
+        }
         AuthMethod::Local {
             kind: AuthLocalKind::LocalPriv { priv_key },
         } => {
@@ -667,40 +895,11 @@ pub async fn auth<H: Handler>(
             let mut auth = Authenticator::new(handle, user).load_agent(agent).await?;
 
             match kind {
-                AuthAgentKind::Full { fallback } => {
-                    if auth.all_in_agent().await?.is_success() {
-                        Ok(AuthResult::Success)
-                    } else if let Some(fallback) = fallback {
-                        match fallback {
-                            AuthLocalKind::LocalPriv { priv_key } => {
-                                let mut auth = Authenticator::new(handle, user);
-                                auth.local_priv_key(priv_key).await
-                            }
-                            AuthLocalKind::LocalCert { cert, priv_key } => {
-                                let mut auth = Authenticator::new(handle, user);
-                                auth.local_cert(cert, priv_key).await
-                            }
-                        }
-                    } else {
-                        Ok(AuthResult::Failure)
-                    }
-                }
-                AuthAgentKind::LocalPriv { priv_key } => {
-                    if auth.local_priv_key(priv_key).await?.is_success() {
-                        Ok(AuthResult::Success)
-                    } else {
-                        let mut auth = Authenticator::new(handle, user);
-                        auth.local_priv_key(priv_key).await
-                    }
-                }
+                AuthAgentKind::Full => auth.all_in_agent().await,
+                AuthAgentKind::LocalPriv { priv_key } => auth.local_priv_key(priv_key).await,
                 AuthAgentKind::LocalPub { pub_key } => auth.local_pub_key(pub_key).await,
                 AuthAgentKind::LocalCertPriv { cert, priv_key } => {
-                    if auth.local_cert_priv_key(cert, priv_key).await?.is_success() {
-                        Ok(AuthResult::Success)
-                    } else {
-                        let mut auth = Authenticator::new(handle, user);
-                        auth.local_cert(cert, priv_key).await
-                    }
+                    auth.local_cert_priv_key(cert, priv_key).await
                 }
                 AuthAgentKind::LocalCertPub { cert, pub_key } => {
                     auth.local_cert_pub_key(cert, pub_key).await

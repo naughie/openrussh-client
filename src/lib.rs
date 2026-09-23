@@ -33,7 +33,7 @@
 //! - `Port`
 //! - `User`
 //! - `ProxyJump`
-//! - `IdentityFile` (limitation: use the first `IdentityFile` only even if you specify multiple items)
+//! - `IdentityFile`
 //! - `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
 //! - `CertificateFile`
 //! - `IdentitiesOnly`

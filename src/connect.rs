@@ -1,5 +1,5 @@
 use crate::auth::Error as AuthError;
-use crate::auth::{AuthMethod, AuthResult, Authenticator};
+use crate::auth::{AuthMethods, AuthResult, Authenticator};
 use crate::config::{Chain, Host};
 
 use russh::client::Config;
@@ -66,12 +66,15 @@ impl<H: Handler + Send + 'static> Connection<H> {
             conf: Arc<Config>,
             host: &Host,
             handler: H,
+            includes_none: bool,
         ) -> Result<Handle<H>, Error<H>> {
             let mut handle =
                 russh::client::connect(conf, (&*host.dest.name, host.dest.port), handler)
                     .await
                     .map_err(Error::Establish)?;
-            auth(host, &mut handle).await.map_err(Error::AuthError)?;
+            auth(host, &mut handle, includes_none)
+                .await
+                .map_err(Error::AuthError)?;
 
             Ok(handle)
         }
@@ -80,6 +83,7 @@ impl<H: Handler + Send + 'static> Connection<H> {
             host: &Host,
             stream: S,
             handler: H,
+            includes_none: bool,
         ) -> Result<Handle<H>, Error<H>>
         where
             S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -88,7 +92,9 @@ impl<H: Handler + Send + 'static> Connection<H> {
             let mut handle = russh::client::connect_stream(conf, stream, handler)
                 .await
                 .map_err(Error::Establish)?;
-            auth(host, &mut handle).await.map_err(Error::AuthError)?;
+            auth(host, &mut handle, includes_none)
+                .await
+                .map_err(Error::AuthError)?;
 
             Ok(handle)
         }
@@ -99,13 +105,14 @@ impl<H: Handler + Send + 'static> Connection<H> {
             update_conf(&handler, &mut conf);
             (handler, conf)
         };
+        let includes_none = true;
 
         let (first, bastions) = target.iter();
 
         let handle = if let Some(bastions) = bastions {
             let mut handle = {
                 let (handler, conf) = setup_handler(first);
-                connect(Arc::new(conf), first, handler).await?
+                connect(Arc::new(conf), first, handler, includes_none).await?
             };
 
             for bastion in bastions {
@@ -120,27 +127,40 @@ impl<H: Handler + Send + 'static> Connection<H> {
                     .map_err(Error::ProxyJump)?;
                 handle = {
                     let (handler, conf) = setup_handler(bastion.to);
-                    connect_stream(Arc::new(conf), bastion.to, channel.into_stream(), handler)
-                        .await?
+                    connect_stream(
+                        Arc::new(conf),
+                        bastion.to,
+                        channel.into_stream(),
+                        handler,
+                        includes_none,
+                    )
+                    .await?
                 };
             }
 
             handle
         } else {
             let (handler, conf) = setup_handler(first);
-            connect(Arc::new(conf), first, handler).await?
+            connect(Arc::new(conf), first, handler, includes_none).await?
         };
 
         Ok(Self { handle })
     }
 }
 
-async fn auth<H: Handler>(host: &Host, handle: &mut Handle<H>) -> Result<AuthResult, AuthError> {
+async fn auth<H: Handler>(
+    host: &Host,
+    handle: &mut Handle<H>,
+    includes_none: bool,
+) -> Result<AuthResult, AuthError> {
     let mut auth = Authenticator::new(handle, &host.dest.user);
-    if auth.none().await?.is_success() {
-        return Ok(AuthResult::Success);
+
+    let methods = AuthMethods::from_config(&host.auth, includes_none);
+    for method in methods.iter() {
+        if auth.perform(method).await?.is_success() {
+            return Ok(AuthResult::Success);
+        }
     }
 
-    let method = AuthMethod::from_config(&host.auth)?;
-    auth.perform(method).await
+    Ok(AuthResult::Failure)
 }
