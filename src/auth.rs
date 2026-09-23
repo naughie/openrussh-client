@@ -1,3 +1,7 @@
+//! Provides various authentication methods loaded from an OpenSSH config.
+//!
+//! The supported authentication methods are listed as the [`AuthMethod`] type.
+
 use crate::config::Auth as AuthConfig;
 
 use russh::client::{Handle, Handler};
@@ -9,6 +13,8 @@ use tokio::net::UnixStream;
 
 use std::path::Path;
 
+/// The authentication error. It is likely to mean unexpected, unrecoverable errors, rather than the
+/// authentication failure.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum Error {
@@ -40,6 +46,7 @@ pub enum Error {
     MultiStep,
 }
 
+/// The authentication succeeded or failed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AuthResult {
     Success,
@@ -48,21 +55,6 @@ pub enum AuthResult {
 
 impl AuthResult {
     fn try_from(res: russh::client::AuthResult) -> Result<Self, Error> {
-        use russh::client::AuthResult as RusshAuthResult;
-        match res {
-            RusshAuthResult::Success => Ok(Self::Success),
-            RusshAuthResult::Failure {
-                partial_success: true,
-                ..
-            } => Err(Error::MultiStep),
-            RusshAuthResult::Failure {
-                partial_success: false,
-                ..
-            } => Ok(Self::Failure),
-        }
-    }
-
-    fn try_from_pubkey_check(res: russh::client::AuthResult) -> Result<Self, Error> {
         use russh::MethodKind;
         use russh::client::AuthResult as RusshAuthResult;
 
@@ -276,6 +268,11 @@ mod helper {
     }
 }
 
+/// Performs the SSH authentication.
+///
+/// The type parameter `A` means either 1) the unit type `()`, indicating that you use no SSH agents
+/// for the next authentication request, or 2) an [`AgentClient`] you initialized elsewhere or
+/// during the [`perform()`](Authenticator::perform()) method.
 pub struct Authenticator<'a, H: Handler, A = ()> {
     handle: &'a mut Handle<H>,
     user: &'a str,
@@ -283,6 +280,8 @@ pub struct Authenticator<'a, H: Handler, A = ()> {
 }
 
 impl<'a, H: Handler> Authenticator<'a, H, ()> {
+    /// Creates an [`Authenticator`] with empty [`AgentClient`]; that is, does not use any SSH
+    /// agents in the next authentication.
     pub fn new(handle: &'a mut Handle<H>, user: &'a str) -> Self {
         Self {
             handle,
@@ -291,12 +290,20 @@ impl<'a, H: Handler> Authenticator<'a, H, ()> {
         }
     }
 
+    /// Performs authentication. It automatically calls [`Authenticator::load_agent()`] with the
+    /// `agent` (if any) given by the `method`.
+    ///
+    /// It then invokes an individual authentication method on [`Authenticator`].
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn perform(&mut self, method: AuthMethod<'_>) -> Result<AuthResult, Error> {
         self::auth(self.handle, self.user, method).await
     }
 }
 
 impl<'a, H: Handler, A> Authenticator<'a, H, A> {
+    /// Drops the current SSH agent (type parameter `A`) and sets the new agent.
     pub fn set_agent<NewA>(self, agent: NewA) -> Authenticator<'a, H, NewA> {
         Authenticator {
             handle: self.handle,
@@ -305,34 +312,47 @@ impl<'a, H: Handler, A> Authenticator<'a, H, A> {
         }
     }
 
+    /// Drops the current SSH agent (type parameter `A`) and sets the new agent loaded from the
+    /// socket at `agent`.
     pub async fn load_agent(
         self,
         agent: &Path,
     ) -> Result<Authenticator<'a, H, AgentClient<UnixStream>>, Error> {
         let agent = load_agent(agent).await?;
-        Ok(Authenticator {
-            handle: self.handle,
-            user: self.user,
-            agent,
-        })
+        Ok(self.set_agent(agent))
     }
 }
 
 impl<'a, H: Handler> Authenticator<'a, H, ()> {
+    /// Performs the authentication method `none`.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn none(&mut self) -> Result<AuthResult, Error> {
         let res = self
             .handle
             .authenticate_none(self.user)
             .await
             .map_err(Error::Connection)?;
-        AuthResult::try_from_pubkey_check(res)
+        AuthResult::try_from(res)
     }
 
+    /// Performs the authentication method `pubkey` with the public key contained in `priv_key`,
+    /// signed by `priv_key`.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn local_priv_key(&mut self, priv_key: &Path) -> Result<AuthResult, Error> {
         let priv_key = helper::load_priv_local(priv_key)?;
         helper::auth_by_priv_local(priv_key, self.user, self.handle).await
     }
 
+    /// Performs the authentication method `pubkey` with the certificate `cert`, signed by
+    /// `priv_key`. It returns [`Err(Error::PubkeyMismatch)`](Error::PubkeyMismatch) if the two
+    /// public keys, one from `cert` and the other from `priv_key`, do not coincide.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn local_cert(&mut self, cert: &Path, priv_key: &Path) -> Result<AuthResult, Error> {
         let cert = helper::load_cert_local(cert)?;
         let priv_key = helper::load_priv_local(priv_key)?;
@@ -344,6 +364,13 @@ impl<'a, H: Handler> Authenticator<'a, H, ()> {
 }
 
 impl<'a, H: Handler, S: AgentStream + Unpin + Send> Authenticator<'a, H, AgentClient<S>> {
+    /// Performs the authentication method `pubkey` with the given SSH agent.
+    ///
+    /// It tries [all identities](AgentClient::request_identities()) obtained from the agent,
+    /// serving one by one, signed by the agent.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn all_in_agent(&mut self) -> Result<AuthResult, Error> {
         let identities = helper::all_identities(&mut self.agent).await?;
 
@@ -366,17 +393,40 @@ impl<'a, H: Handler, S: AgentStream + Unpin + Send> Authenticator<'a, H, AgentCl
         Ok(AuthResult::Failure)
     }
 
+    /// Performs the authentication method `pubkey` with the given SSH agent.
+    ///
+    /// It loads the `priv_key`, extracts the public key from the private key, and serves this
+    /// public key signed by the agent. It does not use the private key for signing.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn local_priv_key(&mut self, priv_key: &Path) -> Result<AuthResult, Error> {
         let priv_key = helper::load_priv_local(priv_key)?;
         let pub_key = PublicKey::from(&priv_key);
         helper::auth_by_pub_agent(pub_key, &mut self.agent, self.user, self.handle).await
     }
 
+    /// Performs the authentication method `pubkey` with the given SSH agent.
+    ///
+    /// It loads the `pub_key` and have it signed by the agent.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn local_pub_key(&mut self, pub_key: &Path) -> Result<AuthResult, Error> {
         let pub_key = helper::load_pub_local(pub_key)?;
         helper::auth_by_pub_agent(pub_key, &mut self.agent, self.user, self.handle).await
     }
 
+    /// Performs the authentication method `pubkey` with the given SSH agent.
+    ///
+    /// It loads both the certificate `cert` and the private key `priv_key`,
+    /// then serves the certificate signed by the agent.
+    ///
+    /// It returns [`Err(Error::PubkeyMismatch)`](Error::PubkeyMismatch) if the two
+    /// public keys, one from `cert` and the other from `priv_key`, do not coincide.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn local_cert_priv_key(
         &mut self,
         cert: &Path,
@@ -390,6 +440,16 @@ impl<'a, H: Handler, S: AgentStream + Unpin + Send> Authenticator<'a, H, AgentCl
         helper::auth_by_cert_agent(cert, &mut self.agent, self.user, self.handle).await
     }
 
+    /// Performs the authentication method `pubkey` with the given SSH agent.
+    ///
+    /// It loads both the certificate `cert` and the public key `pub_key`,
+    /// then serves the certificate signed by the agent.
+    ///
+    /// It returns [`Err(Error::PubkeyMismatch)`](Error::PubkeyMismatch) if the two
+    /// public keys, one from `cert` and the other from `pub_key`, do not coincide.
+    ///
+    /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+    /// while `Err` suggests that you stop the authentication immediately.
     pub async fn local_cert_pub_key(
         &mut self,
         cert: &Path,
@@ -404,26 +464,42 @@ impl<'a, H: Handler, S: AgentStream + Unpin + Send> Authenticator<'a, H, AgentCl
     }
 }
 
+/// Represents the authentication methods that needs to be signed by the local private key.
 #[derive(Debug, Clone, Copy)]
 pub enum AuthLocalKind<'a> {
+    /// Authentication by the public-private key pair extracted from the given path.
     LocalPriv { priv_key: &'a Path },
+    /// Shows the server the certificate, signed by the given private key. The public keys of the
+    /// certificate and that of the private key must identical.
     LocalCert { cert: &'a Path, priv_key: &'a Path },
 }
 
+/// Connects to an SSH agent to sign the payload.
 #[derive(Debug, Clone, Copy)]
 pub enum AuthAgentKind<'a> {
+    /// Tries all the identities returned by [`AgentClient::request_identities()`] first, then
+    /// fallback to [`AuthLocalKind`].
     Full { fallback: Option<AuthLocalKind<'a>> },
+    /// Uses the public key, extracted from the given private key, signed by the SSH agent. Fallback
+    /// to [`AuthLocalKind::LocalPriv`].
     LocalPriv { priv_key: &'a Path },
+    /// Uses the public key, signed by the SSH agent.
     LocalPub { pub_key: &'a Path },
+    /// Uses the certificate, signed by the SSH agent. The private key is used only for checking the
+    /// public key matching (i.e., checking if the public key in the certificate and that from the
+    /// private key are equal). Fallback to [`AuthLocalKind::LocalCert`].
     LocalCertPriv { cert: &'a Path, priv_key: &'a Path },
+    /// Uses the certificate, signed by the SSH agent. The public key is used only for checking if
+    /// the public key in the certificate coincides the given public key.
     LocalCertPub { cert: &'a Path, pub_key: &'a Path },
 }
 
+/// Authentication methods.
 #[derive(Debug, Clone, Copy)]
 pub enum AuthMethod<'a> {
-    Local {
-        kind: AuthLocalKind<'a>,
-    },
+    /// Uses local keys only (no SSH agent).
+    Local { kind: AuthLocalKind<'a> },
+    /// Uses an SSH agent with or without local files as fallback.
     Agent {
         agent: &'a Path,
         kind: AuthAgentKind<'a>,
@@ -431,6 +507,7 @@ pub enum AuthMethod<'a> {
 }
 
 impl<'a> AuthMethod<'a> {
+    /// Converts the OpenSSH configurations to an [`AuthMethod`].
     pub fn from_config(auth: &'a AuthConfig) -> Result<Self, Error> {
         if let Some(agent) = &auth.agent {
             if auth.identities_only {
@@ -508,6 +585,12 @@ impl<'a> AuthMethod<'a> {
     }
 }
 
+/// Whether a local key file looks like a public key or like a private key.
+///
+/// It does not guarantee that the file *is* a public key or a private key, nor does it guarantee
+/// that the file does not contain the malformed data.
+/// It is just a hint for
+/// extracting [`AuthMethod`] from the path settings in the OpenSSH config.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum KeyType {
     MaybePublic,
@@ -555,6 +638,13 @@ pub fn check_pub_or_priv(path: &Path) -> KeyType {
     check_impl(path).unwrap_or(KeyType::Error)
 }
 
+/// Performs authentication. It automatically calls [`Authenticator::load_agent()`] with the
+/// `agent` (if any) given by the `method`.
+///
+/// It then invokes an individual authentication method on [`Authenticator`].
+///
+/// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
+/// while `Err` suggests that you stop the authentication immediately.
 pub async fn auth<H: Handler>(
     handle: &mut Handle<H>,
     user: &str,

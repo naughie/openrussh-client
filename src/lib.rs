@@ -32,6 +32,7 @@
 //! - `Host`
 //! - `Port`
 //! - `User`
+//! - `ProxyJump`
 //! - `IdentityFile` (limitation: use the first `IdentityFile` only even if you specify multiple items)
 //! - `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
 //! - `CertificateFile`
