@@ -134,10 +134,7 @@ impl KnownHostsHandler {
                 None
             }
         }));
-        let mut cas = cas.map(|cas| (cas, host));
-        if let Some((cas, _)) = &mut cas {
-            cas.sort_unstable();
-        }
+        let cas = cas.map(|cas| (cas, host));
 
         Self { pubkeys, cas }
     }
@@ -190,50 +187,74 @@ impl KnownHostsHandler {
     pub fn update_preferred_config(&self, config: &mut Preferred) {
         use std::borrow::Cow;
 
-        // `it` is a sorted iterator
-        fn dedup<T: Eq + Clone>(it: impl Iterator<Item = T>) -> Vec<T> {
-            let mut v = Vec::new();
-
-            for item in it {
-                if let Some(prev) = v.last()
-                    && &item == prev
-                {
-                    continue;
-                }
-                v.push(item.clone());
-            }
-
-            v
+        let pubkeys = self.preferred_public_key_alg(config);
+        if pubkeys.is_some() {
+            config.key = Cow::Owned(pubkeys.collect());
         }
 
-        if let Some(pubkeys) = &self.pubkeys {
-            let mut new_algs = dedup(pubkeys.iter().map(|(alg, _)| alg.to_alg()));
+        config.host_key_certificates = Cow::Borrowed(Self::preferred_cert_alg());
+    }
 
-            for alg in config.key.iter() {
-                let alg_key = SigAlg::from(alg);
-                if pubkeys
-                    .binary_search_by_key(&alg_key, |(alg, _)| *alg)
-                    .is_err()
-                {
-                    new_algs.push(alg.clone());
-                }
+    pub fn preferred_public_key_alg<'k, 'c>(
+        &'k self,
+        config: &'c Preferred,
+    ) -> PreferredPublicKeyAlgIter<'k, 'c> {
+        PreferredPublicKeyAlgIter {
+            known: self.pubkeys.as_deref().unwrap_or_default(),
+            known_it: self.pubkeys.as_ref().map(|v| v.iter()),
+            prev: SigAlg::Other,
+            preferred: config.key.iter(),
+        }
+    }
+
+    pub const fn preferred_cert_alg() -> &'static [Algorithm] {
+        KnownHosts::preferred_cert_alg()
+    }
+}
+
+pub struct PreferredPublicKeyAlgIter<'k, 'c> {
+    known: &'k [(SigAlg, Fingerprint)],
+    known_it: Option<std::slice::Iter<'k, (SigAlg, Fingerprint)>>,
+    prev: SigAlg,
+    preferred: std::slice::Iter<'c, Algorithm>,
+}
+
+impl PreferredPublicKeyAlgIter<'_, '_> {
+    pub fn is_some(&self) -> bool {
+        self.known_it.is_some()
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.known_it.is_none()
+    }
+}
+
+impl Iterator for PreferredPublicKeyAlgIter<'_, '_> {
+    type Item = Algorithm;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let known = self.known_it.as_mut()?;
+
+        for &(alg, _) in known {
+            if alg == self.prev {
+                continue;
             }
-
-            config.key = Cow::Owned(new_algs);
+            self.prev = alg;
+            return Some(alg.to_alg());
         }
 
-        const PREFERRED: &[Algorithm] = &[
-            SigAlg::Ed25519.to_alg(),
-            SigAlg::EcdsaSha2NistP521.to_alg(),
-            SigAlg::EcdsaSha2NistP256.to_alg(),
-            SigAlg::EcdsaSha2NistP256.to_alg(),
-            #[cfg(feature = "rsa")]
-            SigAlg::RsaSha512.to_alg(),
-            #[cfg(feature = "rsa")]
-            SigAlg::RsaSha256.to_alg(),
-        ];
+        for alg in &mut self.preferred {
+            let alg_key = SigAlg::from(alg);
+            if self
+                .known
+                .binary_search_by_key(&alg_key, |(alg, _)| *alg)
+                .is_err()
+            {
+                return Some(alg.clone());
+            }
+        }
 
-        config.host_key_certificates = Cow::Borrowed(PREFERRED);
+        None
     }
 }
 
@@ -424,6 +445,20 @@ impl KnownHosts {
 
     pub fn handler(&self, host: &str, port: u16) -> KnownHostsHandler {
         KnownHostsHandler::new(self, host, port)
+    }
+
+    pub const fn preferred_cert_alg() -> &'static [Algorithm] {
+        const PREFERRED: &[Algorithm] = &[
+            SigAlg::Ed25519.to_alg(),
+            SigAlg::EcdsaSha2NistP521.to_alg(),
+            SigAlg::EcdsaSha2NistP256.to_alg(),
+            SigAlg::EcdsaSha2NistP256.to_alg(),
+            #[cfg(feature = "rsa")]
+            SigAlg::RsaSha512.to_alg(),
+            #[cfg(feature = "rsa")]
+            SigAlg::RsaSha256.to_alg(),
+        ];
+        PREFERRED
     }
 }
 
