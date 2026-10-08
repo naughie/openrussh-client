@@ -17,8 +17,7 @@ use std::path::Path;
 pub struct KnownHostsHandler {
     /// Guaranteed not to contain `PubkeySigAlg::Other`.
     pubkeys: Option<Vec<(SigAlg, Fingerprint)>>,
-    /// Guaranteed not to contain `CertSigAlg::Other`.
-    cas: Option<(Vec<(SigAlg, Fingerprint)>, String)>,
+    cas: Option<(Vec<Fingerprint>, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -129,10 +128,8 @@ impl KnownHostsHandler {
         let cas = collect(known_hosts.cas.iter().filter_map(|(entry, _)| {
             if host_matched_known_hosts(&host, port_str, entry.host_patterns()) {
                 let pubkey = entry.public_key();
-                let alg = SigAlg::from(&pubkey.algorithm());
 
-                (alg != SigAlg::Other)
-                    .then(|| (alg, Fingerprint::new(HashAlg::Sha256, pubkey.key_data())))
+                Some(Fingerprint::new(HashAlg::Sha256, pubkey.key_data()))
             } else {
                 None
             }
@@ -172,7 +169,7 @@ impl KnownHostsHandler {
                 return MatchResult::PrincipalMismatch;
             }
 
-            let cas = cas.iter().map(|(_, fp)| fp);
+            let cas = cas.iter();
             if cert.validate(cas).is_ok() {
                 MatchResult::Found
             } else {
