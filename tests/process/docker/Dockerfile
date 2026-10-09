@@ -1,4 +1,24 @@
-FROM rust:1-trixie AS toolchain
+FROM rust:1-alpine AS toolchain
+
+ENV OPENRUSSH_TEST_ID=process
+
+ENV CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_TARGET_DIR=/cargo-target \
+    PATH=/usr/local/cargo/bin:$PATH
+
+WORKDIR /repo
+COPY . .
+
+RUN mkdir /dist \
+    && cp ./tests/${OPENRUSSH_TEST_ID}/docker/entrypoint.sh /dist/entrypoint.sh
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/cargo-target \
+       cargo build --manifest-path ./tests/${OPENRUSSH_TEST_ID}/Cargo.toml \
+    && cp /cargo-target/debug/test-${OPENRUSSH_TEST_ID} /dist/run-test
+
 
 FROM debian:13.7-slim
 
@@ -15,10 +35,6 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
        build-essential \
        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-
-COPY --from=toolchain /usr/local/cargo /usr/local/cargo
-COPY --from=toolchain /usr/local/rustup /usr/local/rustup
 
 RUN groupadd -g 1001 alice \
     && useradd --create-home --shell /bin/sh alice -u 1001 -g 1001 \
@@ -72,21 +88,9 @@ RUN rm -f /etc/ssh/ssh_host_* \
        'AllowStreamLocalForwarding yes' \
        > /etc/ssh/sshd_config
 
-ENV CARGO_HOME=/home/bob/.cargo \
-    RUSTUP_HOME=/usr/local/rustup \
-    PATH=/usr/local/cargo/bin:$PATH
+COPY --chown=bob:bob --from=toolchain /dist/run-test /opt/tests/run-test
+COPY --chown=bob:bob --from=toolchain /dist/entrypoint.sh /opt/tests/test-entrypoint
+RUN chmod 0700 /opt/tests/test-entrypoint
 
-RUN install -d -m 0755 -o bob -g bob /home/bob/.cargo
-
-WORKDIR /repo
-COPY --chown=bob:bob . .
-
-COPY tests/process/docker/entrypoint.sh /usr/local/bin/test-entrypoint
-RUN chmod 0755 /usr/local/bin/test-entrypoint
-
-RUN --mount=type=cache,target=/home/bob/.cargo,uid=1002,gid=1002 \
-       runuser -u bob -- \
-       cargo build --manifest-path tests/process/Cargo.toml
-
-ENTRYPOINT ["/usr/local/bin/test-entrypoint"]
-CMD ["./tests/process/target/debug/test-process"]
+ENTRYPOINT ["/opt/tests/test-entrypoint"]
+CMD ["/opt/tests/run-test"]
