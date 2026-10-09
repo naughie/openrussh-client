@@ -62,7 +62,7 @@ We deliberately support only the following host key / certificate algorithms whe
 ```toml
 [dependencies]
 tokio = { version = "1.53.1", features = ["full"] }
-openrussh-client = "0.1"
+openrussh-client = "0.3"
 ```
 
 `src/main.rs`:
@@ -92,14 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let known_hosts = KnownHosts::parse_default_path()?;
 
-    let conn = Connection::connect(
-        &hosts,
-        // `KnownHosts` generates `KnownHostsHandler` that is tied with the target host
-        |host| known_hosts.handler(&host.dest.name, host.dest.port),
-        // Updates host key / certificate algorithms during the handshake
-        |handler, conf| handler.update_preferred_config(&mut conf.preferred),
-    )
-    .await?;
+    let conn = Connection::connect(&hosts, known_hosts).await?;
 
     println!("SSH established");
 
