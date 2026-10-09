@@ -1,0 +1,7 @@
+.dockerignore
+.gitignore
+
+target
+
+/tests/x.sh
+/tests/**/test.sh
