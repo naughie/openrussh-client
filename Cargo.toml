@@ -14,8 +14,8 @@ categories = ["asynchronous", "authentication", "cryptography"]
 description = "Russh client wrapper with supporting OpenSSH files"
 
 [dependencies]
-russh = { version = "0.63", default-features = false }
-ssh2-config = "0.7"
+russh = { version = "0.64", default-features = false }
+ssh2-config = "0.8"
 tokio = { version = "1", features = ["io-util", "net"] }
 whoami = "2.1"
 
