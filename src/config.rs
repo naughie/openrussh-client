@@ -60,7 +60,7 @@ pub enum Error {
 /// let target = Target::parse("my-host");
 /// let hosts = target.query(&conf).unwrap();
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Target<'a> {
     pub host: &'a str,
     pub port: Option<u16>,
@@ -130,7 +130,7 @@ impl<'a> Target<'a> {
 }
 
 /// Represents a server profile (where to connect), both the final target and bastions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dest {
     /// Corresponds to the `HostName` directive.
     pub name: String,
@@ -141,7 +141,7 @@ pub struct Dest {
 }
 
 /// Represents the authentication methods that the client will try.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Auth {
     /// Corresponds to the `IdentityFile` directive.
     pub identities: Option<Vec<PathBuf>>,
@@ -158,8 +158,20 @@ pub struct Auth {
     pub includes_none: bool,
 }
 
+impl Default for Auth {
+    fn default() -> Self {
+        Self {
+            identities: None,
+            cert: None,
+            agent: None,
+            identities_only: false,
+            includes_none: true,
+        }
+    }
+}
+
 /// Represents a configuration for a server, both the final target and bastions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Host {
     pub dest: Dest,
     pub auth: Auth,
@@ -365,28 +377,6 @@ impl ExactSizeIterator for BastionIter<'_> {
 }
 
 fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Error> {
-    fn query(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
-        let name = params
-            .host_name
-            .take()
-            .unwrap_or_else(|| target.host.to_owned());
-        let port = params.port.unwrap_or_else(|| target.port.unwrap_or(22));
-        let user = if let Some(user) = params.user.take() {
-            user
-        } else if let Some(user) = target.user {
-            user.to_owned()
-        } else {
-            whoami::username().map_err(Error::UserNotFound)?
-        };
-
-        let auth = parse_auth_methods(params);
-
-        Ok(Host {
-            dest: Dest { name, port, user },
-            auth,
-        })
-    }
-
     let mut target_params = conf.query(target.host);
     let target_host = query(&mut target_params, target)?;
 
@@ -427,41 +417,63 @@ fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Err
     }
 }
 
-fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
-    use std::path::Component;
+fn query(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
+    let name = params
+        .host_name
+        .take()
+        .unwrap_or_else(|| target.host.to_owned());
+    let port = params.port.unwrap_or_else(|| target.port.unwrap_or(22));
+    let user = if let Some(user) = params.user.take() {
+        user
+    } else if let Some(user) = target.user {
+        user.to_owned()
+    } else {
+        whoami::username().map_err(Error::UserNotFound)?
+    };
 
-    let mut it = path.components();
-    match it.next() {
-        Some(Component::Normal(first)) => {
-            if first != "~" {
-                let bytes = first.as_encoded_bytes();
-                let user = match bytes.first().copied() {
-                    Some(b'~') => first.to_str().and_then(|s| s.strip_prefix('~')),
-                    Some(_) => return Some(path),
-                    None => return None,
-                };
-                if user.is_none_or(|user| {
-                    if let Ok(me) = whoami::username() {
-                        user != me
-                    } else {
-                        true
-                    }
-                }) {
-                    return None;
-                }
-            }
+    let auth = parse_auth_methods(params);
 
-            let mut expanded = std::env::home_dir()?;
-            expanded.push(it.as_path());
-
-            Some(expanded)
-        }
-        Some(_) => Some(path),
-        None => None,
-    }
+    Ok(Host {
+        dest: Dest { name, port, user },
+        auth,
+    })
 }
 
 fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
+    fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
+        use std::path::Component;
+
+        let mut it = path.components();
+        match it.next() {
+            Some(Component::Normal(first)) => {
+                if first != "~" {
+                    let bytes = first.as_encoded_bytes();
+                    let user = match bytes.first().copied() {
+                        Some(b'~') => first.to_str().and_then(|s| s.strip_prefix('~')),
+                        Some(_) => return Some(path),
+                        None => return None,
+                    };
+                    if user.is_none_or(|user| {
+                        if let Ok(me) = whoami::username() {
+                            user != me
+                        } else {
+                            true
+                        }
+                    }) {
+                        return None;
+                    }
+                }
+
+                let mut expanded = std::env::home_dir()?;
+                expanded.push(it.as_path());
+
+                Some(expanded)
+            }
+            Some(_) => Some(path),
+            None => None,
+        }
+    }
+
     fn agent_from_env(env: &str) -> Option<PathBuf> {
         std::env::var_os(env).and_then(|value| expand_tilde(value.into()))
     }
@@ -503,5 +515,486 @@ fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
         agent,
         identities_only,
         includes_none: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_target() {
+        assert_eq!(
+            Target::parse("my-host"),
+            Target {
+                host: "my-host",
+                port: None,
+                user: None,
+            }
+        );
+
+        assert_eq!(
+            Target::parse("user@my-host"),
+            Target {
+                host: "my-host",
+                port: None,
+                user: Some("user"),
+            }
+        );
+
+        assert_eq!(
+            Target::parse("my-host:2222"),
+            Target {
+                host: "my-host",
+                port: Some(2222),
+                user: None,
+            }
+        );
+
+        assert_eq!(
+            Target::parse("user@my-host:22"),
+            Target {
+                host: "my-host",
+                port: Some(22),
+                user: Some("user"),
+            }
+        );
+
+        assert_eq!(
+            Target::parse("my-host:nan"),
+            Target {
+                host: "my-host",
+                port: None,
+                user: None,
+            }
+        );
+    }
+
+    fn openssh_config(conf: &str) -> OpenSshConfig {
+        use ssh2_config::ParseRule;
+        use std::io::BufReader;
+        use std::io::Cursor;
+
+        let mut rdr = BufReader::new(Cursor::new(conf.trim().as_bytes()));
+        let conf = OpenSshConfig::default().parse(&mut rdr, ParseRule::ALLOW_UNSUPPORTED_FIELDS);
+        assert!(conf.is_ok(), "could not parse OpenSSH config: {conf:?}");
+        conf.unwrap()
+    }
+
+    fn query_config(conf: &str, host: &str) -> Host {
+        let target = Target::parse(host);
+        let conf = openssh_config(conf);
+        let mut params = conf.query(target.host);
+        let res = query(&mut params, target);
+        assert!(
+            res.is_ok(),
+            "could not resolve OpenSSH host for {host:?}: {res:?}"
+        );
+        res.unwrap()
+    }
+
+    fn clear_ssh_agent() {
+        // SAFETY: We read/write environment variables only through std::env
+        unsafe {
+            std::env::remove_var(AGENT_ENV);
+        }
+    }
+    fn set_ssh_agent(env: &str, value: &str) {
+        // SAFETY: We read/write environment variables only through std::env
+        unsafe {
+            std::env::set_var(env, value);
+        }
+    }
+
+    fn username() -> String {
+        whoami::username().unwrap()
+    }
+
+    #[test]
+    fn parse_dest() {
+        let conf = "
+Host test
+    HostName test.com
+    User me
+    Port 2222
+    IdentityFile path
+        ";
+        let host = query_config(conf, "test");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "test.com".to_owned(),
+                user: "me".to_owned(),
+                port: 2222,
+            }
+        );
+        let host = query_config(conf, "no");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "no".to_owned(),
+                user: username(),
+                port: 22,
+            }
+        );
+        let host = query_config(conf, "user@no:2022");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "no".to_owned(),
+                user: "user".to_owned(),
+                port: 2022,
+            }
+        );
+
+        let conf = "
+Host *
+    Port 2222
+
+Host test
+    HostName test.com
+    User me
+    Port 22
+    IdentityFile path
+
+Host *
+    Port 2022
+    User you
+        ";
+        let host = query_config(conf, "test");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "test.com".to_owned(),
+                user: "me".to_owned(),
+                port: 2222,
+            }
+        );
+        let host = query_config(conf, "no");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "no".to_owned(),
+                user: "you".to_owned(),
+                port: 2222,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_auth() {
+        clear_ssh_agent();
+
+        let conf = "
+Host test1
+    IdentityFile path
+Host test2
+    IdentityFile path1
+    IdentityFile path2
+        ";
+        let host = query_config(conf, "test1");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![PathBuf::from("path")]),
+                ..Default::default()
+            }
+        );
+        let host = query_config(conf, "test2");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![PathBuf::from("path1"), PathBuf::from("path2")]),
+                ..Default::default()
+            }
+        );
+        let host = query_config(conf, "no");
+        assert_eq!(host.auth, Auth::default());
+
+        let conf = "
+Host *
+    IdentityFile path1
+Host test
+    IdentityFile path2
+Host *
+    IdentityFile path3
+        ";
+        let host = query_config(conf, "test");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![
+                    PathBuf::from("path1"),
+                    PathBuf::from("path2"),
+                    PathBuf::from("path3")
+                ]),
+                ..Default::default()
+            }
+        );
+
+        let conf = "
+Host test1
+    IdentityFile id
+    CertificateFile cert 
+    IdentitiesOnly yes
+Host test2
+    IdentitiesOnly no
+        ";
+        let host = query_config(conf, "test1");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![PathBuf::from("id")]),
+                cert: Some(PathBuf::from("cert")),
+                identities_only: true,
+                ..Default::default()
+            }
+        );
+        let host = query_config(conf, "test2");
+        assert_eq!(host.auth, Auth::default());
+
+        let conf = "
+Host test1
+    IdentityAgent none
+Host test2
+    IdentityAgent sock
+Host test3
+    IdentityAgent SSH_AUTH_SOCK
+Host test4
+    IdentityAgent $SSH_AUTH_SOCK
+Host test5
+    IdentityAgent $_OPENRUSSH_TEST_SSH_AUTH_SOCK
+        ";
+        let host = query_config(conf, "test1");
+        assert_eq!(host.auth, Auth::default());
+        let host = query_config(conf, "test2");
+        assert_eq!(
+            host.auth,
+            Auth {
+                agent: Some(PathBuf::from("sock")),
+                ..Default::default()
+            }
+        );
+        let host = query_config(conf, "test3");
+        assert_eq!(host.auth, Auth::default());
+        let host = query_config(conf, "test4");
+        assert_eq!(host.auth, Auth::default());
+
+        set_ssh_agent("_OPENRUSSH_TEST_SSH_AUTH_SOCK", "sock");
+        let host = query_config(conf, "test5");
+        assert_eq!(
+            host.auth,
+            Auth {
+                agent: Some(PathBuf::from("sock")),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn expand_tilde() {
+        let home = std::env::home_dir().unwrap();
+
+        let conf = "
+Host test1
+    IdentityFile path
+Host test2
+    IdentityFile ~/path
+Host test3
+    IdentityFile ~/long/long/path
+        ";
+        let host = query_config(conf, "test1");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![PathBuf::from("path")]),
+                ..Default::default()
+            }
+        );
+        let host = query_config(conf, "test2");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![home.join("path")]),
+                ..Default::default()
+            }
+        );
+        let host = query_config(conf, "test3");
+        assert_eq!(
+            host.auth,
+            Auth {
+                identities: Some(vec![home.join("long/long/path")]),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn proxy_jump() {
+        #[derive(Debug)]
+        struct Bastion {
+            from: Option<String>,
+            to: String,
+        }
+        #[derive(Debug)]
+        struct BastionRef<'a> {
+            from: Option<&'a str>,
+            to: &'a str,
+        }
+        impl PartialEq<BastionRef<'_>> for Bastion {
+            fn eq(&self, other: &BastionRef<'_>) -> bool {
+                self.from.as_deref() == other.from && self.to == other.to
+            }
+        }
+        fn query_chain(conf: &str, host: &str) -> Vec<Bastion> {
+            let target = Target::parse(host);
+            let conf = openssh_config(conf);
+            let chain = target.query(&conf);
+
+            assert!(
+                chain.is_ok(),
+                "could not resolve OpenSSH host for {host:?}: {chain:?}"
+            );
+            let chain = chain.unwrap();
+            let (first, rest) = chain.iter();
+
+            let mut v = vec![Bastion {
+                from: None,
+                to: first.dest.name.to_owned(),
+            }];
+
+            if let Some(rest) = rest {
+                for bastion in rest {
+                    v.push(Bastion {
+                        from: Some(bastion.from.dest.name.to_owned()),
+                        to: bastion.to.dest.name.to_owned(),
+                    });
+                }
+            }
+
+            v
+        }
+
+        let conf = "
+Host test1
+    IdentityFile path
+Host test2
+    IdentityFile path
+    ProxyJump test1
+Host test3
+    IdentityFile path
+    ProxyJump test2
+Host test4
+    IdentityFile path
+Host test5
+    IdentityFile path
+    ProxyJump test1,test4
+Host test6
+    IdentityFile path
+    ProxyJump test2,test4
+Host test7
+    IdentityFile path
+    ProxyJump test1,test2,test3,test4
+        ";
+        assert_eq!(
+            query_chain(conf, "test1"),
+            vec![BastionRef {
+                from: None,
+                to: "test1",
+            }],
+        );
+        assert_eq!(
+            query_chain(conf, "test2"),
+            vec![
+                BastionRef {
+                    from: None,
+                    to: "test1",
+                },
+                BastionRef {
+                    from: Some("test1"),
+                    to: "test2",
+                },
+            ],
+        );
+        assert_eq!(
+            query_chain(conf, "test3"),
+            vec![
+                BastionRef {
+                    from: None,
+                    to: "test1",
+                },
+                BastionRef {
+                    from: Some("test1"),
+                    to: "test2",
+                },
+                BastionRef {
+                    from: Some("test2"),
+                    to: "test3",
+                },
+            ],
+        );
+        assert_eq!(
+            query_chain(conf, "test5"),
+            vec![
+                BastionRef {
+                    from: None,
+                    to: "test1",
+                },
+                BastionRef {
+                    from: Some("test1"),
+                    to: "test4",
+                },
+                BastionRef {
+                    from: Some("test4"),
+                    to: "test5",
+                },
+            ],
+        );
+        assert_eq!(
+            query_chain(conf, "test6"),
+            vec![
+                BastionRef {
+                    from: None,
+                    to: "test1",
+                },
+                BastionRef {
+                    from: Some("test1"),
+                    to: "test2",
+                },
+                BastionRef {
+                    from: Some("test2"),
+                    to: "test4",
+                },
+                BastionRef {
+                    from: Some("test4"),
+                    to: "test6",
+                },
+            ],
+        );
+        assert_eq!(
+            query_chain(conf, "test7"),
+            vec![
+                BastionRef {
+                    from: None,
+                    to: "test1",
+                },
+                BastionRef {
+                    from: Some("test1"),
+                    to: "test2",
+                },
+                BastionRef {
+                    from: Some("test2"),
+                    to: "test3",
+                },
+                BastionRef {
+                    from: Some("test3"),
+                    to: "test4",
+                },
+                BastionRef {
+                    from: Some("test4"),
+                    to: "test7",
+                },
+            ],
+        );
     }
 }
