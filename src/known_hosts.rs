@@ -1,3 +1,5 @@
+use crate::connect::{Context, MakeHandler};
+
 use russh::client::{ChannelOpenHandle, Handler, Msg, Session};
 use russh::keys::PublicKeyOrCertificate;
 use russh::{Channel, ChannelOpenFailure};
@@ -459,6 +461,24 @@ impl KnownHosts {
             SigAlg::RsaSha256.to_alg(),
         ];
         PREFERRED
+    }
+}
+
+impl MakeHandler for KnownHosts {
+    type Handler = KnownHostsHandler;
+    type Error = std::convert::Infallible;
+
+    fn make_handler(
+        &self,
+        host: &crate::config::Host,
+    ) -> Result<Context<Self::Handler>, Self::Error> {
+        use russh::client::Config;
+        use std::sync::Arc;
+
+        let handler = self.handler(&host.dest.name, host.dest.port);
+        let mut conf = Config::default();
+        handler.update_preferred_config(&mut conf.preferred);
+        Ok(Context::new(handler, Arc::new(conf)))
     }
 }
 

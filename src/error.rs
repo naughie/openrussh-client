@@ -73,39 +73,46 @@ impl StdError for AuthError {
     }
 }
 
-impl<H: Handler> Debug for ConnectError<H> {
+impl<H: Handler, M: Debug> Debug for ConnectError<H, M> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ConnectError::AuthError(e) => f.debug_tuple("AuthError").field(e).finish(),
+            ConnectError::AuthFailure => f.debug_tuple("AuthFailure").finish(),
             ConnectError::Establish(e) => f.debug_tuple("Establish").field(e).finish(),
             ConnectError::ProxyJump(e) => f.debug_tuple("ProxyJump").field(e).finish(),
+            ConnectError::MakeHandler(e) => f.debug_tuple("MakeHandler").field(e).finish(),
         }
     }
 }
 
-impl<H: Handler> Display for ConnectError<H> {
+impl<H: Handler, M: Display> Display for ConnectError<H, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AuthError(e) => write!(f, "Authentication failed: {e}"),
+            Self::AuthError(e) => write!(f, "Error happened while authenticating: {e}"),
+            Self::AuthFailure => write!(f, "Authentication failed"),
             Self::Establish(e) => write!(
                 f,
                 "Could not establish the connection (either TCP or TLS layer): {e:?}"
             ),
             Self::ProxyJump(e) => write!(f, "Could not open a channel for proxy jump: {e}"),
+            Self::MakeHandler(e) => write!(f, "Failed to make a handler: {e}"),
         }
     }
 }
 
-impl<H> StdError for ConnectError<H>
+impl<H, M> StdError for ConnectError<H, M>
 where
     H: Handler,
     H::Error: StdError + 'static,
+    M: StdError + 'static,
 {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::AuthError(e) => Some(e),
             Self::Establish(e) => Some(e),
             Self::ProxyJump(e) => Some(e),
+            Self::MakeHandler(e) => Some(e),
+            Self::AuthFailure => None,
         }
     }
 }

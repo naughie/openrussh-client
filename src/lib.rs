@@ -78,15 +78,7 @@
 //!
 //! let known_hosts = KnownHosts::parse_default_path().unwrap();
 //!
-//! let conn = Connection::connect(
-//!     &hosts,
-//!     // `KnownHosts` generates `KnownHostsHandler` that is tied with the target host
-//!     |host| known_hosts.handler(&host.dest.name, host.dest.port),
-//!     // Updates host key / certificate algorithms during the handshake
-//!     |handler, conf| handler.update_preferred_config(&mut conf.preferred),
-//! )
-//!     .await
-//!     .unwrap();
+//! let conn = Connection::connect(&hosts, known_hosts).await.unwrap();
 //!
 //! println!("SSH established");
 //!

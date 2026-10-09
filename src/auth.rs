@@ -535,6 +535,7 @@ impl ExactSizeIterator for AuthMethodsIter<'_, '_> {
         <_ as ExactSizeIterator>::len(&self.inner)
     }
 }
+impl std::iter::FusedIterator for AuthMethodsIter<'_, '_> {}
 
 impl Default for AuthMethods<'_> {
     fn default() -> Self {
@@ -597,8 +598,8 @@ impl<'a> AuthMethods<'a> {
     ///
     /// If `includes_none` is true, then the authentication method `none` comes first in the authentication
     /// stack. If false, then we interpret the config as-is.
-    pub fn from_config(auth: &'a AuthConfig, includes_none: bool) -> Self {
-        if includes_none {
+    pub fn from_config(auth: &'a AuthConfig) -> Self {
+        if auth.includes_none {
             Self::from_config_with_none(auth)
         } else {
             Self::from_config_without_none(auth).unwrap_or_default()
@@ -622,6 +623,15 @@ impl<'a> AuthMethods<'a> {
     pub fn multiple(methods: Vec<AuthMethod<'a>>) -> Self {
         Self {
             inner: Either::Right(methods),
+        }
+    }
+
+    pub fn push(&mut self, method: AuthMethod<'a>) {
+        match &mut self.inner {
+            Either::Left(m) => {
+                self.inner = Either::Right(vec![*m, method]);
+            }
+            Either::Right(v) => v.push(method),
         }
     }
 

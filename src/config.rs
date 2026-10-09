@@ -152,6 +152,10 @@ pub struct Auth {
     pub agent: Option<PathBuf>,
     /// Corresponds to the `IdentitiesOnly` directive.
     pub identities_only: bool,
+    /// Indicates whether we perform the authentication method "none" first or not.
+    /// Since OpenSSH config has no directive to control this behavior, it always defaults to `true`.
+    /// However, you can substitute it with `false` later.
+    pub includes_none: bool,
 }
 
 /// Represents a configuration for a server, both the final target and bastions.
@@ -498,5 +502,6 @@ fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
         cert,
         agent,
         identities_only,
+        includes_none: true,
     }
 }
