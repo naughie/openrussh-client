@@ -958,3 +958,337 @@ pub async fn auth<H: Handler>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SERVER_PRIVATE_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACBoefHOM8aK105TU9ydt0XcQbuP00cc4bgt1dNRP6NQwgAAAJjw3maC8N5m
+ggAAAAtzc2gtZWQyNTUxOQAAACBoefHOM8aK105TU9ydt0XcQbuP00cc4bgt1dNRP6NQwg
+AAAED2PxxWV4TwrgNzWILS7/30O8Pl9c8+2gP2AT/t8Lr9PWh58c4zxorXTlNT3J23RdxB
+u4/TRxzhuC3V01E/o1DCAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----";
+    const SERVER_PUBLIC_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGh58c4zxorXTlNT3J23RdxBu4/TRxzhuC3V01E/o1DC";
+    const CLIENT_PRIVATE_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACBskYA3drQx9UzaPnzvtdCXPG5VYa0V8lF+ilvixpmfOwAAAJi7S+riu0vq
+4gAAAAtzc2gtZWQyNTUxOQAAACBskYA3drQx9UzaPnzvtdCXPG5VYa0V8lF+ilvixpmfOw
+AAAEAvDJ6wQmVOtBgC12+yIuKcHFjNV8faQ1Fp2u1f7QD/EmyRgDd2tDH1TNo+fO+10Jc8
+blVhrRXyUX6KW+LGmZ87AAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----";
+    const CLIENT_PUBLIC_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGyRgDd2tDH1TNo+fO+10Jc8blVhrRXyUX6KW+LGmZ87";
+
+    const CA_PRIVATE_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACAVtF/Epk/5rvSi3bIA7LbiDtXUMkGpjhT3jDyvtXtldQAAAJispajBrKWo
+wQAAAAtzc2gtZWQyNTUxOQAAACAVtF/Epk/5rvSi3bIA7LbiDtXUMkGpjhT3jDyvtXtldQ
+AAAEAjsRpOIkieUFqMNGv8cQG1x98Q1DHqbtKUIq+Cn/f3SxW0X8SmT/mu9KLdsgDstuIO
+1dQyQamOFPeMPK+1e2V1AAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----";
+    const CA_PUBLIC_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBW0X8SmT/mu9KLdsgDstuIO1dQyQamOFPeMPK+1e2V1";
+
+    use russh::{
+        Disconnect, client,
+        keys::{Certificate, PrivateKey, PublicKey, PublicKeyOrCertificate, decode_secret_key},
+        server::{self, Auth},
+    };
+    use tokio::net::UnixStream;
+    use tokio::task::JoinHandle;
+
+    use tempfile::NamedTempFile;
+
+    use std::fmt;
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct ServerHandler1;
+
+    impl server::Handler for ServerHandler1 {
+        type Error = russh::Error;
+
+        async fn auth_none(&mut self, _: &str) -> Result<Auth, Self::Error> {
+            Ok(Auth::reject())
+        }
+
+        async fn auth_publickey(
+            &mut self,
+            user: &str,
+            public_key: &PublicKey,
+        ) -> Result<Auth, Self::Error> {
+            let client_public_key = PublicKey::from_openssh(CLIENT_PUBLIC_KEY.trim()).unwrap();
+            Ok(
+                if user == "alice" && public_key.key_data() == client_public_key.key_data() {
+                    Auth::Accept
+                } else {
+                    Auth::reject()
+                },
+            )
+        }
+
+        async fn auth_openssh_certificate(
+            &mut self,
+            _: &str,
+            _: &Certificate,
+        ) -> Result<Auth, Self::Error> {
+            Ok(Auth::reject())
+        }
+    }
+
+    #[derive(Debug)]
+    struct ServerHandler2;
+
+    impl server::Handler for ServerHandler2 {
+        type Error = russh::Error;
+
+        async fn auth_none(&mut self, _: &str) -> Result<Auth, Self::Error> {
+            Ok(Auth::reject())
+        }
+
+        async fn auth_publickey(&mut self, _: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+            Ok(Auth::reject())
+        }
+
+        async fn auth_openssh_certificate(
+            &mut self,
+            user: &str,
+            certificate: &Certificate,
+        ) -> Result<Auth, Self::Error> {
+            use russh::keys::HashAlg;
+
+            let trusted_ca = PublicKey::from_openssh(CA_PUBLIC_KEY).unwrap();
+            let ca_fp = trusted_ca.fingerprint(HashAlg::Sha256);
+
+            let allowed = user == "alice"
+                && certificate.cert_type().is_user()
+                && certificate.validate([&ca_fp]).is_ok()
+                && certificate.valid_principals().iter().any(|p| p == user);
+
+            if allowed {
+                Ok(Auth::Accept)
+            } else {
+                Ok(Auth::reject())
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct ServerHandler3;
+
+    impl server::Handler for ServerHandler3 {
+        type Error = russh::Error;
+
+        async fn auth_none(&mut self, _: &str) -> Result<Auth, Self::Error> {
+            Ok(Auth::Accept)
+        }
+
+        async fn auth_publickey(&mut self, _: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+            Ok(Auth::reject())
+        }
+
+        async fn auth_openssh_certificate(
+            &mut self,
+            _: &str,
+            _: &Certificate,
+        ) -> Result<Auth, Self::Error> {
+            Ok(Auth::reject())
+        }
+    }
+
+    async fn start_ssh_server<H>(handler: H) -> (JoinHandle<()>, UnixStream)
+    where
+        H: russh::server::Handler + fmt::Debug + Send + 'static,
+        H::Error: fmt::Debug,
+    {
+        let server_private_key = decode_secret_key(SERVER_PRIVATE_KEY, None).unwrap();
+
+        let config = Arc::new(server::Config {
+            keys: vec![server_private_key],
+            ..Default::default()
+        });
+
+        let (server_socket, client_socket) = UnixStream::pair().unwrap();
+
+        let task = tokio::spawn(async move {
+            let session = server::run_stream(config, server_socket, handler)
+                .await
+                .unwrap();
+
+            session.await.unwrap();
+        });
+
+        (task, client_socket)
+    }
+
+    struct ClientHandler;
+
+    impl client::Handler for ClientHandler {
+        type Error = russh::Error;
+
+        async fn check_server_key(
+            &mut self,
+            server_public_key: &PublicKeyOrCertificate,
+        ) -> Result<bool, Self::Error> {
+            let expected = PublicKey::from_openssh(SERVER_PUBLIC_KEY.trim()).unwrap();
+
+            Ok(match server_public_key {
+                PublicKeyOrCertificate::PublicKey { key, .. } => {
+                    key.key_data() == expected.key_data()
+                }
+                PublicKeyOrCertificate::Certificate(_) => false,
+            })
+        }
+    }
+
+    async fn test_auth<H: Handler + 'static>(
+        socket: UnixStream,
+        handler: H,
+        method: AuthMethod<'_>,
+        expect_success: bool,
+    ) {
+        let mut handle = client::connect_stream(Default::default(), socket, handler)
+            .await
+            .unwrap();
+
+        let res = auth(&mut handle, "alice", method).await.unwrap();
+        if expect_success {
+            assert!(
+                res.is_success(),
+                "authentication failed (expected: success)"
+            );
+        } else {
+            assert!(
+                !res.is_success(),
+                "authentication succeeded (expected: failure)"
+            );
+        }
+
+        handle
+            .disconnect(Disconnect::ByApplication, "test finished", "")
+            .await
+            .unwrap();
+    }
+
+    struct LocalKey {
+        key: NamedTempFile,
+    }
+    impl LocalKey {
+        fn priv_key() -> Self {
+            Self::from_bytes(CLIENT_PRIVATE_KEY.as_bytes())
+        }
+        fn from_cert(cert: Certificate) -> Self {
+            Self::from_bytes(cert.to_openssh().unwrap().as_bytes())
+        }
+        fn from_bytes(bytes: &[u8]) -> Self {
+            use std::io::Write as _;
+
+            let mut key = NamedTempFile::new().unwrap();
+            key.write_all(bytes).unwrap();
+            key.flush().unwrap();
+            Self { key }
+        }
+        fn path(&self) -> &Path {
+            self.key.path()
+        }
+    }
+
+    struct Ca;
+
+    impl Ca {
+        fn issue_client_cert(self, username: &str) -> Certificate {
+            use russh::keys::ssh_key::certificate::{Builder, CertType};
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            let key = PrivateKey::from_openssh(CA_PRIVATE_KEY.trim()).unwrap();
+
+            let client = PublicKey::from_openssh(CLIENT_PUBLIC_KEY).unwrap();
+
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let mut builder = Builder::new(
+                vec![0x42; 32], // Fixed nonce for this test fixture.
+                client.key_data().clone(),
+                now.saturating_sub(60),
+                now.checked_add(3600).unwrap(),
+            )
+            .unwrap();
+
+            builder.cert_type(CertType::User).unwrap();
+            builder.serial(1).unwrap();
+            builder.key_id("test-client").unwrap();
+            builder.valid_principal(username).unwrap();
+
+            builder.sign(&key).unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn none() {
+        let auth = AuthMethod::None;
+
+        let (server, sock) = start_ssh_server(ServerHandler1).await;
+        test_auth(sock, ClientHandler, auth, false).await;
+        server.await.ok();
+
+        let (server, sock) = start_ssh_server(ServerHandler2).await;
+        test_auth(sock, ClientHandler, auth, false).await;
+        server.await.ok();
+
+        let (server, sock) = start_ssh_server(ServerHandler3).await;
+        test_auth(sock, ClientHandler, auth, true).await;
+        server.await.ok();
+    }
+
+    #[tokio::test]
+    async fn local_priv_key() {
+        let key = LocalKey::priv_key();
+        let auth = AuthMethod::Local {
+            kind: AuthLocalKind::LocalPriv {
+                priv_key: key.path(),
+            },
+        };
+
+        let (server, sock) = start_ssh_server(ServerHandler1).await;
+        test_auth(sock, ClientHandler, auth, true).await;
+        server.await.ok();
+
+        let (server, sock) = start_ssh_server(ServerHandler2).await;
+        test_auth(sock, ClientHandler, auth, false).await;
+        server.await.ok();
+
+        let (server, sock) = start_ssh_server(ServerHandler3).await;
+        test_auth(sock, ClientHandler, auth, false).await;
+        server.await.ok();
+    }
+
+    #[tokio::test]
+    async fn local_cert() {
+        let cert = LocalKey::from_cert(Ca.issue_client_cert("alice"));
+        let priv_key = LocalKey::priv_key();
+        let auth = AuthMethod::Local {
+            kind: AuthLocalKind::LocalCert {
+                priv_key: priv_key.path(),
+                cert: cert.path(),
+            },
+        };
+
+        let (server, sock) = start_ssh_server(ServerHandler1).await;
+        test_auth(sock, ClientHandler, auth, false).await;
+        server.await.ok();
+
+        let (server, sock) = start_ssh_server(ServerHandler2).await;
+        test_auth(sock, ClientHandler, auth, true).await;
+        server.await.ok();
+
+        let (server, sock) = start_ssh_server(ServerHandler3).await;
+        test_auth(sock, ClientHandler, auth, false).await;
+        server.await.ok();
+    }
+}

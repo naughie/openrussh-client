@@ -42,3 +42,7 @@ serde = ["russh/serde"]
 known-hosts = ["dep:glob", "dep:hmac", "dep:sha1"]
 
 cmd = ["dep:bytes"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
