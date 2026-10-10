@@ -12,4 +12,4 @@ __find_test_dir() {
 
 __tests="$(__find_test_dir "$0")"
 __cmd="$1"
-find "${__tests}" -maxdepth 1 -mindepth 1 -type d -exec {}/test.sh "$@" \;
+find "${__tests}" -maxdepth 2 -mindepth 2 -type f -name "test.sh" -exec {} "$@" \;

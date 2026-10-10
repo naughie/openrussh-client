@@ -3,7 +3,8 @@ use crate::auth::{AuthMethods, AuthResult, Authenticator};
 use crate::config::{Chain, Dest, Host};
 
 use russh::client::Config;
-use russh::client::{Handle, Handler};
+use russh::client::Handle;
+pub use russh::client::Handler;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 

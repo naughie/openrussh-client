@@ -1,5 +1,5 @@
 [package]
-name = "test-process"
+name = "test-auth-no-cert"
 version = "0.1.0"
 edition = "2024"
 publish = false

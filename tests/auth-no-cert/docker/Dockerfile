@@ -1,6 +1,6 @@
 FROM rust:1-alpine AS toolchain
 
-ENV OPENRUSSH_TEST_ID=process
+ENV OPENRUSSH_TEST_ID=auth-no-cert
 
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
@@ -21,6 +21,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 
 FROM debian:13.7-slim
+
+ENV MY_AGENT_SOCK=/home/bob/.ssh/agent.sock
 
 ARG OPENSSH_VERSION=1:10.0p1-7+deb13u4
 
@@ -44,11 +46,12 @@ RUN groupadd -g 1001 alice \
 RUN install -d -m 0700 -o alice -g alice /home/alice/.ssh \
     && install -d -m 0700 -o bob -g bob /home/bob/.ssh \
     && ssh-keygen -q -t ed25519 -N '' \
+       -f /home/bob/.ssh/unknown_id \
+    && ssh-keygen -q -t ed25519 -N '' \
        -f /home/bob/.ssh/id_ed25519 \
     && install -m 0600 -o alice -g alice \
        /home/bob/.ssh/id_ed25519.pub \
        /home/alice/.ssh/authorized_keys \
-    && rm /home/bob/.ssh/id_ed25519.pub \
     && printf '%s\n' \
        'Host *' \
        '    HostName 127.0.0.1' \

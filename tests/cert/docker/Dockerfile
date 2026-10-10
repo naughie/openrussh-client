@@ -1,6 +1,6 @@
 FROM rust:1-alpine AS toolchain
 
-ENV OPENRUSSH_TEST_ID=process
+ENV OPENRUSSH_TEST_ID=cert
 
 ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
@@ -44,11 +44,30 @@ RUN groupadd -g 1001 alice \
 RUN install -d -m 0700 -o alice -g alice /home/alice/.ssh \
     && install -d -m 0700 -o bob -g bob /home/bob/.ssh \
     && ssh-keygen -q -t ed25519 -N '' \
+       -f /etc/ssh/test_ca \
+    && ssh-keygen -q -t ed25519 -N '' \
        -f /home/bob/.ssh/id_ed25519 \
-    && install -m 0600 -o alice -g alice \
-       /home/bob/.ssh/id_ed25519.pub \
-       /home/alice/.ssh/authorized_keys \
-    && rm /home/bob/.ssh/id_ed25519.pub \
+    && ssh-keygen -q -s /etc/ssh/test_ca -I bob -n alice \
+       -V -1m:+52w /home/bob/.ssh/id_ed25519.pub \
+    && install -d -m 0700 -o bob -g bob /home/bob/.ssh/dummy \
+    && cp /home/bob/.ssh/id_ed25519.pub /home/bob/.ssh/dummy/expired.pub \
+    && ssh-keygen -q -s /etc/ssh/test_ca -I expired -n alice \
+       -V -2d:-1d /home/bob/.ssh/dummy/expired.pub \
+    && cp /home/bob/.ssh/id_ed25519.pub /home/bob/.ssh/dummy/not-yet-valid.pub \
+    && ssh-keygen -q -s /etc/ssh/test_ca -I not-yet-valid -n alice \
+       -V +52w:+104w /home/bob/.ssh/dummy/not-yet-valid.pub \
+    && ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/untrusted_ca \
+    && cp /home/bob/.ssh/id_ed25519.pub /home/bob/.ssh/dummy/untrusted.pub \
+    && ssh-keygen -q -s /etc/ssh/untrusted_ca -I untrusted -n alice \
+       -V -1m:+52w /home/bob/.ssh/dummy/untrusted.pub \
+    && cp /etc/ssh/untrusted_ca.pub /home/bob/.ssh/dummy/mismatched.pub \
+    && ssh-keygen -q -s /etc/ssh/untrusted_ca -I mismatched -n alice \
+       -V -1m:+52w /home/bob/.ssh/dummy/mismatched.pub \
+    && rm /etc/ssh/untrusted_ca /etc/ssh/untrusted_ca.pub \
+    && rm /home/bob/.ssh/dummy/expired.pub \
+       /home/bob/.ssh/dummy/not-yet-valid.pub \
+       /home/bob/.ssh/dummy/untrusted.pub \
+       /home/bob/.ssh/dummy/mismatched.pub \
     && printf '%s\n' \
        'Host *' \
        '    HostName 127.0.0.1' \
@@ -61,9 +80,12 @@ RUN install -d -m 0700 -o alice -g alice /home/alice/.ssh \
 RUN rm -f /etc/ssh/ssh_host_* \
     && ssh-keygen -q -t ed25519 -N '' \
        -f /etc/ssh/ssh_host_ed25519_key \
+    && ssh-keygen -q -s /etc/ssh/test_ca -I server -h -n 127.0.0.1 \
+       -V -1m:+52w /etc/ssh/ssh_host_ed25519_key.pub \
+    && rm /etc/ssh/test_ca \
     && { \
-         printf '[127.0.0.1]:2222 '; \
-         cat /etc/ssh/ssh_host_ed25519_key.pub; \
+         printf '@cert-authority [127.0.0.1]:2222 '; \
+         cat /etc/ssh/test_ca.pub; \
        } > /home/bob/.ssh/known_hosts \
     && ssh-keygen -H -f /home/bob/.ssh/known_hosts \
     && rm -f /home/bob/.ssh/known_hosts.old \
@@ -73,11 +95,17 @@ RUN rm -f /etc/ssh/ssh_host_* \
     && printf '%s\n' \
        'ListenAddress 127.0.0.1' \
        'Port 2222' \
+       'MaxStartups 100' \
+       'PerSourcePenalties no' \
        'HostKey /etc/ssh/ssh_host_ed25519_key' \
+       'HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub' \
+       'HostKeyAlgorithms ssh-ed25519-cert-v01@openssh.com' \
        'AllowUsers alice' \
        'PubkeyAuthentication yes' \
        'AuthenticationMethods publickey' \
-       'AuthorizedKeysFile .ssh/authorized_keys' \
+       'AuthorizedKeysFile none' \
+       'TrustedUserCAKeys /etc/ssh/test_ca.pub' \
+       'PubkeyAcceptedAlgorithms ssh-ed25519-cert-v01@openssh.com' \
        'PasswordAuthentication no' \
        'KbdInteractiveAuthentication no' \
        'PermitEmptyPasswords no' \
@@ -86,6 +114,16 @@ RUN rm -f /etc/ssh/ssh_host_* \
        'AllowTcpForwarding yes' \
        'AllowStreamLocalForwarding yes' \
        > /etc/ssh/sshd_config
+
+RUN ca="$(cat /etc/ssh/test_ca.pub)" \
+    && wrong_ca="$(cat /home/bob/.ssh/id_ed25519.pub)" \
+    && dummy=/home/bob/.ssh/dummy \
+    && printf '' > "$dummy/known_hosts-empty" \
+    && printf '@cert-authority [127.0.0.1]:2222 %s\n' "$wrong_ca" > "$dummy/known_hosts-wrong-ca" \
+    && printf '@cert-authority [localhost]:2222 %s\n' "$ca" > "$dummy/known_hosts-localhost" \
+    && printf '@cert-authority [127.0.0.1]:2222 %s\n' "$wrong_ca" "$ca" > "$dummy/known_hosts-multiple" \
+    && chmod 0600 "$dummy"/* \
+    && chown -R bob:bob "$dummy"
 
 COPY --chown=bob:bob --from=toolchain /dist/run-test /opt/tests/run-test
 COPY --chown=bob:bob --from=toolchain /dist/entrypoint.sh /opt/tests/test-entrypoint
