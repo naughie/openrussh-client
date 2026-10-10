@@ -622,8 +622,13 @@ mod tests {
 
     use russh::keys::PublicKey;
 
-    const SERVER_PUBLIC_KEY: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPE5p/jvF1CzC2BG/tkhYRzvsmlb9GMD/HCxAKPx3Fx9";
+    fn rand_public_key() -> PublicKey {
+        use russh::keys::PrivateKey;
+
+        let mut rng = rand::rng();
+        let private_key = PrivateKey::random(&mut rng, Algorithm::Ed25519).unwrap();
+        private_key.public_key().clone()
+    }
 
     fn make_known_hosts<'a>(target: impl IntoIterator<Item = &'a str>) -> KnownHosts {
         const HOST_PLAIN_DUMMY1: &str = "dummy.net";
@@ -637,9 +642,12 @@ mod tests {
         let mut s = String::new();
 
         fn push_dummy(s: &mut String, dummy: &str) {
+            let public_key = rand_public_key();
+            let public_key = public_key.to_openssh().unwrap();
+
             s.push_str(dummy.trim());
             s.push(' ');
-            s.push_str(SERVER_PUBLIC_KEY.trim());
+            s.push_str(public_key.trim());
             s.push('\n');
         }
 
@@ -667,9 +675,6 @@ mod tests {
 
     #[test]
     fn public_key() {
-        const SERVER_PUBLIC_KEY_OLD: &str =
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIYDc2Sdu2jkJHIBRUhebklYKQ8TzCvs/klXQFGJrs7S";
-
         const HOST_PLAIN_GLOB_22: &str = "*.test.com";
         const HOST_PLAIN_GLOB_2222: &str = "[*.test.com]:2222";
 
@@ -680,28 +685,30 @@ mod tests {
         const HOST_HASHED_2222: &str =
             "|1|SwCSMfyuiggtBQws61eVrGHyk7Q=|haRngUZFFxGaXgudTJXhQFF26l0=";
 
-        fn assert_impl(
-            targets: impl IntoIterator<Item = (&'static str, &'static str)>,
+        fn assert_impl<'a>(
+            targets: impl IntoIterator<Item = (&'a str, &'a PublicKey)>,
             host: &str,
             port: u16,
+            public_key: &PublicKey,
             expect_found: bool,
         ) {
-            let key = PublicKey::from_openssh(SERVER_PUBLIC_KEY.trim()).unwrap();
-
             let targets = targets
                 .into_iter()
-                .map(|(pat, key)| format!("{pat} {key}"))
+                .map(|(pat, key)| {
+                    let key = key.to_openssh().unwrap();
+                    format!("{pat} {key}")
+                })
                 .collect::<Vec<_>>();
             let known_hosts = make_known_hosts(targets.as_slice().iter().map(|s| s.as_str()));
             let handler = known_hosts.handler(host, port);
 
             if expect_found {
                 assert!(
-                    handler.check_public_key(&key).is_found(),
+                    handler.check_public_key(public_key).is_found(),
                     "expected to find the entry for {host}:{port}, but not found",
                 );
             } else {
-                let res = handler.check_public_key(&key);
+                let res = handler.check_public_key(public_key);
                 assert!(
                     res == MatchResult::NotFound || res == MatchResult::KeyMismatch,
                     "expected not to find the entry for {host}:{port}, but found",
@@ -709,141 +716,169 @@ mod tests {
             }
         }
 
-        assert_impl([(HOST_PLAIN_22, SERVER_PUBLIC_KEY)], "test.com", 22, true);
-        assert_impl(
-            [(HOST_PLAIN_2222, SERVER_PUBLIC_KEY)],
-            "test.com",
-            22,
-            false,
-        );
-        assert_impl(
-            [(HOST_PLAIN_22, SERVER_PUBLIC_KEY)],
-            "test.com",
-            2222,
-            false,
-        );
-        assert_impl(
-            [(HOST_PLAIN_2222, SERVER_PUBLIC_KEY)],
-            "test.com",
-            2022,
-            false,
-        );
-        assert_impl(
-            [
-                (HOST_PLAIN_22, SERVER_PUBLIC_KEY),
-                (HOST_PLAIN_2222, SERVER_PUBLIC_KEY),
-            ],
-            "test.com",
-            22,
-            true,
-        );
-        assert_impl(
-            [
-                (HOST_PLAIN_22, SERVER_PUBLIC_KEY),
-                (HOST_PLAIN_2222, SERVER_PUBLIC_KEY),
-            ],
-            "test.com",
-            2222,
-            true,
-        );
+        let public_key = rand_public_key();
+        let public_key_old = rand_public_key();
 
-        assert_impl([(HOST_HASHED_22, SERVER_PUBLIC_KEY)], "test.com", 22, true);
         assert_impl(
-            [(HOST_HASHED_2222, SERVER_PUBLIC_KEY)],
+            [(HOST_PLAIN_22, &public_key)],
             "test.com",
             22,
-            false,
-        );
-        assert_impl(
-            [(HOST_HASHED_22, SERVER_PUBLIC_KEY)],
-            "test.com",
-            2222,
-            false,
-        );
-        assert_impl(
-            [(HOST_HASHED_2222, SERVER_PUBLIC_KEY)],
-            "test.com",
-            2022,
-            false,
-        );
-        assert_impl(
-            [
-                (HOST_HASHED_22, SERVER_PUBLIC_KEY),
-                (HOST_HASHED_2222, SERVER_PUBLIC_KEY),
-            ],
-            "test.com",
-            22,
+            &public_key,
             true,
         );
         assert_impl(
-            [
-                (HOST_HASHED_22, SERVER_PUBLIC_KEY),
-                (HOST_HASHED_2222, SERVER_PUBLIC_KEY),
-            ],
+            [(HOST_PLAIN_2222, &public_key)],
+            "test.com",
+            22,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [(HOST_PLAIN_22, &public_key)],
             "test.com",
             2222,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [(HOST_PLAIN_2222, &public_key)],
+            "test.com",
+            2022,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [(HOST_PLAIN_22, &public_key), (HOST_PLAIN_2222, &public_key)],
+            "test.com",
+            22,
+            &public_key,
+            true,
+        );
+        assert_impl(
+            [(HOST_PLAIN_22, &public_key), (HOST_PLAIN_2222, &public_key)],
+            "test.com",
+            2222,
+            &public_key,
             true,
         );
 
         assert_impl(
-            [(HOST_PLAIN_GLOB_22, SERVER_PUBLIC_KEY)],
+            [(HOST_HASHED_22, &public_key)],
             "test.com",
             22,
-            false,
-        );
-        assert_impl(
-            [(HOST_PLAIN_GLOB_22, SERVER_PUBLIC_KEY)],
-            "test.test.com",
-            22,
+            &public_key,
             true,
         );
         assert_impl(
-            [(HOST_PLAIN_GLOB_2222, SERVER_PUBLIC_KEY)],
+            [(HOST_HASHED_2222, &public_key)],
+            "test.com",
+            22,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [(HOST_HASHED_22, &public_key)],
+            "test.com",
+            2222,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [(HOST_HASHED_2222, &public_key)],
+            "test.com",
+            2022,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [
+                (HOST_HASHED_22, &public_key),
+                (HOST_HASHED_2222, &public_key),
+            ],
+            "test.com",
+            22,
+            &public_key,
+            true,
+        );
+        assert_impl(
+            [
+                (HOST_HASHED_22, &public_key),
+                (HOST_HASHED_2222, &public_key),
+            ],
+            "test.com",
+            2222,
+            &public_key,
+            true,
+        );
+
+        assert_impl(
+            [(HOST_PLAIN_GLOB_22, &public_key)],
+            "test.com",
+            22,
+            &public_key,
+            false,
+        );
+        assert_impl(
+            [(HOST_PLAIN_GLOB_22, &public_key)],
             "test.test.com",
             22,
+            &public_key,
+            true,
+        );
+        assert_impl(
+            [(HOST_PLAIN_GLOB_2222, &public_key)],
+            "test.test.com",
+            22,
+            &public_key,
             false,
         );
         assert_impl(
-            [(HOST_PLAIN_GLOB_22, SERVER_PUBLIC_KEY)],
+            [(HOST_PLAIN_GLOB_22, &public_key)],
             "test.test.com",
             2222,
+            &public_key,
             false,
         );
         assert_impl(
-            [(HOST_PLAIN_GLOB_2222, SERVER_PUBLIC_KEY)],
+            [(HOST_PLAIN_GLOB_2222, &public_key)],
             "test.test.com",
             2022,
+            &public_key,
             false,
         );
 
         assert_impl(
-            [(HOST_PLAIN_22, SERVER_PUBLIC_KEY_OLD)],
+            [(HOST_PLAIN_22, &public_key_old)],
             "test.com",
             22,
+            &public_key,
             false,
         );
         assert_impl(
-            [(HOST_HASHED_22, SERVER_PUBLIC_KEY_OLD)],
+            [(HOST_HASHED_22, &public_key_old)],
             "test.com",
             22,
+            &public_key,
             false,
         );
         assert_impl(
             [
-                (HOST_PLAIN_22, SERVER_PUBLIC_KEY_OLD),
-                (HOST_PLAIN_22, SERVER_PUBLIC_KEY),
+                (HOST_PLAIN_22, &public_key_old),
+                (HOST_PLAIN_22, &public_key),
             ],
             "test.com",
             22,
+            &public_key,
             true,
         );
         assert_impl(
             [
-                (HOST_PLAIN_22, SERVER_PUBLIC_KEY),
-                (HOST_PLAIN_22, SERVER_PUBLIC_KEY_OLD),
+                (HOST_PLAIN_22, &public_key),
+                (HOST_PLAIN_22, &public_key_old),
             ],
             "test.com",
             22,
+            &public_key,
             true,
         );
     }

@@ -235,67 +235,11 @@ async fn auth<H: Handler>(
 mod tests {
     use super::*;
 
-    const SERVER_PRIVATE_KEY1: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACBWy0Wd0xWHLlXe81ET/P+ersfuV2xkYc4GrgkwulCc4wAAAJj2GJu/9hib
-vwAAAAtzc2gtZWQyNTUxOQAAACBWy0Wd0xWHLlXe81ET/P+ersfuV2xkYc4GrgkwulCc4w
-AAAEClrwPfUxUjysdnKG6Pd6sQL+zUwTZvXNa7p0lRr3ITi1bLRZ3TFYcuVd7zURP8/56u
-x+5XbGRhzgauCTC6UJzjAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
------END OPENSSH PRIVATE KEY-----";
-    const SERVER_PUBLIC_KEY1: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFbLRZ3TFYcuVd7zURP8/56ux+5XbGRhzgauCTC6UJzj";
-    const SERVER_PRIVATE_KEY2: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACDQYMPJ3VMDtaVoU71/CVijKJI9N9t0YzhJdvDAinUrzgAAAJia9AUkmvQF
-JAAAAAtzc2gtZWQyNTUxOQAAACDQYMPJ3VMDtaVoU71/CVijKJI9N9t0YzhJdvDAinUrzg
-AAAEBYYdPCowQZDvual5VN/1Q1+i8f5rPzWfAlyfOdQoF9z9Bgw8ndUwO1pWhTvX8JWKMo
-kj0323RjOEl28MCKdSvOAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
------END OPENSSH PRIVATE KEY-----";
-    const SERVER_PUBLIC_KEY2: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINBgw8ndUwO1pWhTvX8JWKMokj0323RjOEl28MCKdSvO";
-    const SERVER_PRIVATE_KEY3: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACCjmtltMU/u0iQm6clM5e1mgX0KkSO+RwfgG9hKwNKo6AAAAJh5taRqebWk
-agAAAAtzc2gtZWQyNTUxOQAAACCjmtltMU/u0iQm6clM5e1mgX0KkSO+RwfgG9hKwNKo6A
-AAAEABebqwUftyhWhCcYSOs6MIfsseQTxptNYGJe5ZzbJkS6Oa2W0xT+7SJCbpyUzl7WaB
-fQqRI75HB+Ab2ErA0qjoAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
------END OPENSSH PRIVATE KEY-----";
-    const SERVER_PUBLIC_KEY3: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKOa2W0xT+7SJCbpyUzl7WaBfQqRI75HB+Ab2ErA0qjo";
-
-    const CLIENT_PRIVATE_KEY1: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACD43aH+Jx73lJqi523JAQ7Ddrzw0nKbivVY7/yYExUh1wAAAJjqyFxY6shc
-WAAAAAtzc2gtZWQyNTUxOQAAACD43aH+Jx73lJqi523JAQ7Ddrzw0nKbivVY7/yYExUh1w
-AAAEDSP63l5d1prM3F+CpXSNRpJ3c3yIAv6Dx3GoVXzeWjqPjdof4nHveUmqLnbckBDsN2
-vPDScpuK9Vjv/JgTFSHXAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
------END OPENSSH PRIVATE KEY-----";
-    const CLIENT_PUBLIC_KEY1: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPjdof4nHveUmqLnbckBDsN2vPDScpuK9Vjv/JgTFSHX";
-    const CLIENT_PRIVATE_KEY2: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACCNSswS92ve7rX5IcudnSfKzlleSYDpIogXLFyG44XUNwAAAJho9OnaaPTp
-2gAAAAtzc2gtZWQyNTUxOQAAACCNSswS92ve7rX5IcudnSfKzlleSYDpIogXLFyG44XUNw
-AAAEAvCkLY3n44Q5qbcRwxF7lAm+g4J7jjW7o5SYum8ajZ+Y1KzBL3a97utfkhy52dJ8rO
-WV5JgOkiiBcsXIbjhdQ3AAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
------END OPENSSH PRIVATE KEY-----";
-    const CLIENT_PUBLIC_KEY2: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII1KzBL3a97utfkhy52dJ8rOWV5JgOkiiBcsXIbjhdQ3";
-    const CLIENT_PRIVATE_KEY3: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACDpBA9Nmdg1/Ei8u2bx985CDhuF7/CFyhwazrTsDaxX0QAAAJgRPbcpET23
-KQAAAAtzc2gtZWQyNTUxOQAAACDpBA9Nmdg1/Ei8u2bx985CDhuF7/CFyhwazrTsDaxX0Q
-AAAEDWBKg6L09Xmtg+Nq6ke31w8VCcrQUr1D8RIjTV7/Gv2+kED02Z2DX8SLy7ZvH3zkIO
-G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
------END OPENSSH PRIVATE KEY-----";
-    const CLIENT_PUBLIC_KEY3: &str =
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOkED02Z2DX8SLy7ZvH3zkIOG4Xv8IXKHBrOtOwNrFfR";
-
     use crate::auth::{AuthLocalKind, AuthMethod, AuthMethods};
 
     use russh::{
         client,
-        keys::{PublicKey, PublicKeyOrCertificate, decode_secret_key},
+        keys::{PrivateKey, PublicKey, PublicKeyOrCertificate},
         server::{self, Auth},
     };
     use tokio::net::{TcpListener, UnixStream};
@@ -308,21 +252,22 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
     use std::path::Path;
     use std::sync::Arc;
 
-    fn server_config(priv_key: &str) -> Arc<server::Config> {
-        let server_private_key = decode_secret_key(priv_key.trim(), None).unwrap();
-
+    fn server_config(server_private_key: PrivateKey) -> Arc<server::Config> {
         Arc::new(server::Config {
             keys: vec![server_private_key],
             ..Default::default()
         })
     }
 
-    async fn start_ssh_server_sock<H>(handler: H, priv_key: &str) -> (JoinHandle<()>, UnixStream)
+    async fn start_ssh_server_sock<H>(
+        handler: H,
+        server_private_key: PrivateKey,
+    ) -> (JoinHandle<()>, UnixStream)
     where
         H: russh::server::Handler + fmt::Debug + Send + 'static,
         H::Error: fmt::Debug,
     {
-        let config = server_config(priv_key);
+        let config = server_config(server_private_key);
 
         let (server_socket, client_socket) = UnixStream::pair().unwrap();
 
@@ -337,12 +282,15 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
         (task, client_socket)
     }
 
-    async fn start_ssh_server_tcp<H>(handler: H, priv_key: &str) -> (JoinHandle<()>, SocketAddr)
+    async fn start_ssh_server_tcp<H>(
+        handler: H,
+        server_private_key: PrivateKey,
+    ) -> (JoinHandle<()>, SocketAddr)
     where
         H: server::Handler + fmt::Debug + Send + 'static,
         H::Error: fmt::Debug,
     {
-        let config = server_config(priv_key);
+        let config = server_config(server_private_key);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -363,11 +311,11 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
 
     #[derive(Debug)]
     struct ServerHandler {
-        client_public_key: &'static str,
+        client_public_key: PublicKey,
         _task: Option<JoinHandle<()>>,
     }
     impl ServerHandler {
-        fn new(client_public_key: &'static str) -> Self {
+        fn new(client_public_key: PublicKey) -> Self {
             Self {
                 client_public_key,
                 _task: None,
@@ -383,9 +331,8 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
             user: &str,
             public_key: &PublicKey,
         ) -> Result<Auth, Self::Error> {
-            let client_public_key = PublicKey::from_openssh(self.client_public_key.trim()).unwrap();
             Ok(
-                if user == "alice" && public_key.key_data() == client_public_key.key_data() {
+                if user == "alice" && public_key.key_data() == self.client_public_key.key_data() {
                     Auth::Accept
                 } else {
                     Auth::reject()
@@ -441,10 +388,10 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
     }
 
     struct ClientHandler {
-        server_public_key: &'static str,
+        server_public_key: PublicKey,
     }
     impl ClientHandler {
-        fn new(server_public_key: &'static str) -> Self {
+        fn new(server_public_key: PublicKey) -> Self {
             Self { server_public_key }
         }
     }
@@ -456,11 +403,9 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
             &mut self,
             server_public_key: &PublicKeyOrCertificate,
         ) -> Result<bool, Self::Error> {
-            let expected = PublicKey::from_openssh(self.server_public_key.trim()).unwrap();
-
             Ok(match server_public_key {
                 PublicKeyOrCertificate::PublicKey { key, .. } => {
-                    key.key_data() == expected.key_data()
+                    key.key_data() == self.server_public_key.key_data()
                 }
                 PublicKeyOrCertificate::Certificate(_) => false,
             })
@@ -471,7 +416,9 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
         key: NamedTempFile,
     }
     impl LocalKey {
-        fn priv_key(key: &str) -> Self {
+        fn priv_key(key: PrivateKey) -> Self {
+            use russh::keys::ssh_key::LineEnding;
+            let key = key.to_openssh(LineEnding::LF).unwrap();
             Self::from_bytes(key.as_bytes())
         }
         fn from_bytes(bytes: &[u8]) -> Self {
@@ -495,14 +442,44 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
         }
     }
 
+    struct KeyPairs {
+        client_public_key: PublicKey,
+        client_private_key: PrivateKey,
+        server_public_key: PublicKey,
+        server_private_key: PrivateKey,
+    }
+    impl KeyPairs {
+        fn rand() -> Self {
+            use russh::keys::Algorithm;
+
+            let mut rng = rand::rng();
+
+            let client_private_key = PrivateKey::random(&mut rng, Algorithm::Ed25519).unwrap();
+            let client_public_key = client_private_key.public_key().clone();
+
+            let server_private_key = PrivateKey::random(&mut rng, Algorithm::Ed25519).unwrap();
+            let server_public_key = server_private_key.public_key().clone();
+
+            Self {
+                client_public_key,
+                client_private_key,
+                server_public_key,
+                server_private_key,
+            }
+        }
+    }
+
     #[tokio::test]
     async fn single_sock() {
         let dest = test_dest(22);
 
-        let (server, sock) =
-            start_ssh_server_sock(ServerHandler::new(CLIENT_PUBLIC_KEY1), SERVER_PRIVATE_KEY1)
-                .await;
-        let key = LocalKey::priv_key(CLIENT_PRIVATE_KEY1);
+        let key_pair1 = KeyPairs::rand();
+        let (server, sock) = start_ssh_server_sock(
+            ServerHandler::new(key_pair1.client_public_key.clone()),
+            key_pair1.server_private_key.clone(),
+        )
+        .await;
+        let key = LocalKey::priv_key(key_pair1.client_private_key);
         let auth = AuthMethod::Local {
             kind: AuthLocalKind::LocalPriv {
                 priv_key: key.path(),
@@ -512,7 +489,10 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
             &dest,
             AuthMethods::singleton(auth),
             sock,
-            Context::new(ClientHandler::new(SERVER_PUBLIC_KEY1), Default::default()),
+            Context::new(
+                ClientHandler::new(key_pair1.server_public_key.clone()),
+                Default::default(),
+            ),
         )
         .await;
         assert!(conn.is_ok());
@@ -522,10 +502,13 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
             .unwrap();
         server.await.ok();
 
-        let (server, sock) =
-            start_ssh_server_sock(ServerHandler::new(CLIENT_PUBLIC_KEY1), SERVER_PRIVATE_KEY1)
-                .await;
-        let key = LocalKey::priv_key(CLIENT_PRIVATE_KEY2);
+        let key_pair2 = KeyPairs::rand();
+        let (server, sock) = start_ssh_server_sock(
+            ServerHandler::new(key_pair1.client_public_key),
+            key_pair1.server_private_key,
+        )
+        .await;
+        let key = LocalKey::priv_key(key_pair2.client_private_key);
         let auth = AuthMethod::Local {
             kind: AuthLocalKind::LocalPriv {
                 priv_key: key.path(),
@@ -536,7 +519,10 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
                 &dest,
                 AuthMethods::singleton(auth),
                 sock,
-                Context::new(ClientHandler::new(SERVER_PUBLIC_KEY1), Default::default())
+                Context::new(
+                    ClientHandler::new(key_pair1.server_public_key),
+                    Default::default()
+                )
             )
             .await
             .is_err_and(|e| e.failed())
@@ -546,10 +532,14 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
 
     #[tokio::test]
     async fn single_tcp() {
-        let (server, addr) =
-            start_ssh_server_tcp(ServerHandler::new(CLIENT_PUBLIC_KEY1), SERVER_PRIVATE_KEY1).await;
+        let key_pair1 = KeyPairs::rand();
+        let (server, addr) = start_ssh_server_tcp(
+            ServerHandler::new(key_pair1.client_public_key.clone()),
+            key_pair1.server_private_key.clone(),
+        )
+        .await;
         let dest = test_dest(addr.port());
-        let key = LocalKey::priv_key(CLIENT_PRIVATE_KEY1);
+        let key = LocalKey::priv_key(key_pair1.client_private_key);
         let auth = AuthMethod::Local {
             kind: AuthLocalKind::LocalPriv {
                 priv_key: key.path(),
@@ -558,7 +548,10 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
         let conn = connect(
             &dest,
             AuthMethods::singleton(auth),
-            Context::new(ClientHandler::new(SERVER_PUBLIC_KEY1), Default::default()),
+            Context::new(
+                ClientHandler::new(key_pair1.server_public_key.clone()),
+                Default::default(),
+            ),
         )
         .await;
         assert!(conn.is_ok());
@@ -568,10 +561,14 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
             .unwrap();
         server.await.ok();
 
-        let (server, addr) =
-            start_ssh_server_tcp(ServerHandler::new(CLIENT_PUBLIC_KEY1), SERVER_PRIVATE_KEY1).await;
+        let key_pair2 = KeyPairs::rand();
+        let (server, addr) = start_ssh_server_tcp(
+            ServerHandler::new(key_pair1.client_public_key),
+            key_pair1.server_private_key,
+        )
+        .await;
         let dest = test_dest(addr.port());
-        let key = LocalKey::priv_key(CLIENT_PRIVATE_KEY2);
+        let key = LocalKey::priv_key(key_pair2.client_private_key);
         let auth = AuthMethod::Local {
             kind: AuthLocalKind::LocalPriv {
                 priv_key: key.path(),
@@ -581,7 +578,10 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
             connect(
                 &dest,
                 AuthMethods::singleton(auth),
-                Context::new(ClientHandler::new(SERVER_PUBLIC_KEY1), Default::default())
+                Context::new(
+                    ClientHandler::new(key_pair1.server_public_key),
+                    Default::default()
+                )
             )
             .await
             .is_err_and(|e| e.failed())
@@ -592,45 +592,69 @@ G4Xv8IXKHBrOtOwNrFfRAAAAEG1hc2F0b25AaG9tZWhvc3QBAgMEBQ==
     #[tokio::test]
     async fn bastions() {
         use std::convert::Infallible;
-        fn client_handlers(ports: [u16; 3]) -> impl MakeHandler<Error = Infallible> {
+        fn client_handlers(
+            ports: [u16; 3],
+            server_public_keys: [PublicKey; 3],
+        ) -> impl MakeHandler<Error = Infallible> {
             fn make_handler(
                 host: &Host,
                 ports: [u16; 3],
+                server_public_keys: &[PublicKey; 3],
             ) -> Result<Context<ClientHandler>, Infallible> {
                 let port = host.dest.port;
 
+                let [key1, key2, key3] = server_public_keys;
+
                 let key = if ports[0] == port {
-                    SERVER_PUBLIC_KEY1
+                    key1
                 } else if ports[1] == port {
-                    SERVER_PUBLIC_KEY2
+                    key2
                 } else if ports[2] == port {
-                    SERVER_PUBLIC_KEY3
+                    key3
                 } else {
                     unreachable!()
                 };
 
-                let handler = ClientHandler::new(key);
+                let handler = ClientHandler::new(key.clone());
                 Ok(Context::new(handler, Default::default()))
             }
 
-            MakeHandlerFn(move |host: &Host| make_handler(host, ports))
+            MakeHandlerFn(move |host: &Host| make_handler(host, ports, &server_public_keys))
         }
 
         use crate::config::Auth;
 
-        let (server1, addr1) =
-            start_ssh_server_tcp(ServerHandler::new(CLIENT_PUBLIC_KEY1), SERVER_PRIVATE_KEY1).await;
-        let (server2, addr2) =
-            start_ssh_server_tcp(ServerHandler::new(CLIENT_PUBLIC_KEY2), SERVER_PRIVATE_KEY2).await;
-        let (server3, addr3) =
-            start_ssh_server_tcp(ServerHandler::new(CLIENT_PUBLIC_KEY3), SERVER_PRIVATE_KEY3).await;
+        let key_pair1 = KeyPairs::rand();
+        let key_pair2 = KeyPairs::rand();
+        let key_pair3 = KeyPairs::rand();
+
+        let (server1, addr1) = start_ssh_server_tcp(
+            ServerHandler::new(key_pair1.client_public_key),
+            key_pair1.server_private_key,
+        )
+        .await;
+        let (server2, addr2) = start_ssh_server_tcp(
+            ServerHandler::new(key_pair2.client_public_key),
+            key_pair2.server_private_key,
+        )
+        .await;
+        let (server3, addr3) = start_ssh_server_tcp(
+            ServerHandler::new(key_pair3.client_public_key),
+            key_pair3.server_private_key,
+        )
+        .await;
 
         let ports = [addr1.port(), addr2.port(), addr3.port()];
-        let make_handler = client_handlers(ports);
+        let server_public_keys = [
+            key_pair1.server_public_key,
+            key_pair2.server_public_key,
+            key_pair3.server_public_key,
+        ];
+        let make_handler = client_handlers(ports, server_public_keys);
 
-        let key1 = LocalKey::priv_key(CLIENT_PRIVATE_KEY1);
-        let key2 = LocalKey::priv_key(CLIENT_PRIVATE_KEY2);
-        let key3 = LocalKey::priv_key(CLIENT_PRIVATE_KEY3);
+        let key1 = LocalKey::priv_key(key_pair1.client_private_key);
+        let key2 = LocalKey::priv_key(key_pair2.client_private_key);
+        let key3 = LocalKey::priv_key(key_pair3.client_private_key);
 
         let chain = Chain {
             target: Host {

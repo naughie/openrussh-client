@@ -44,5 +44,6 @@ known-hosts = ["dep:glob", "dep:hmac", "dep:sha1"]
 cmd = ["dep:bytes"]
 
 [dev-dependencies]
+rand = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
