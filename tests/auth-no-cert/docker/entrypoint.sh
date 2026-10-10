@@ -4,7 +4,7 @@ set -eu
 /usr/sbin/sshd -t
 /usr/sbin/sshd -e
 
-exec runuser -u bob -- ssh-agent -a "$MY_AGENT_SOCK" /bin/sh -eu -c '
+exec runuser -u alice -- ssh-agent -a "$MY_AGENT_SOCK" /bin/sh -eu -c '
     mkdir -p "$HOME/.ssh/dummy"
     chmod 0700 "$HOME/.ssh/dummy"
     _i=1

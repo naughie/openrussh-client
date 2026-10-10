@@ -14,7 +14,7 @@ fn setup_conf<'a>(append: impl IntoIterator<Item = &'a str>) -> Result<impl std:
     {
         let mut it = append.into_iter();
         if let Some(item) = it.next() {
-            conf.push_str("Host alice-test\n    ");
+            conf.push_str("Host bob-test\n    ");
             conf.push_str(item.trim());
             conf.push('\n');
         }
@@ -52,14 +52,14 @@ fn main() {
     let mut rt = t::runtime();
 
     rt.register("agent certificate", async || {
-        let host = parse_target("alice-test", ["IdentityAgent $MY_AGENT_SOCK"])?;
+        let host = parse_target("bob-test", ["IdentityAgent $MY_AGENT_SOCK"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
         t::finish(&conn).await?;
 
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent $MY_AGENT_SOCK",
                 "IdentitiesOnly yes",
@@ -77,7 +77,7 @@ fn main() {
 
     rt.register("expired certificate", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent $EXPIRED_AGENT_SOCK",
                 "IdentitiesOnly yes",
@@ -104,7 +104,7 @@ fn main() {
 
     rt.register("certificate signed by untrusted CA", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent $UNTRUSTED_AGENT_SOCK",
                 "IdentitiesOnly yes",
@@ -131,7 +131,7 @@ fn main() {
 
     rt.register("certificate for another key", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent $MY_AGENT_SOCK",
                 "IdentitiesOnly yes",

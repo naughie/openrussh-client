@@ -22,9 +22,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:13.7-slim
 
-ENV MY_AGENT_SOCK=/home/bob/.ssh/agent.sock \
-    EXPIRED_AGENT_SOCK=/home/bob/.ssh/dummy/expired-agent.sock \
-    UNTRUSTED_AGENT_SOCK=/home/bob/.ssh/dummy/untrusted-agent.sock
+ENV MY_AGENT_SOCK=/home/alice/.ssh/agent.sock \
+    EXPIRED_AGENT_SOCK=/home/alice/.ssh/dummy/expired-agent.sock \
+    UNTRUSTED_AGENT_SOCK=/home/alice/.ssh/dummy/untrusted-agent.sock
 
 ARG OPENSSH_VERSION=1:10.0p1-7+deb13u4
 
@@ -39,44 +39,44 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g 1001 alice \
-    && useradd --create-home --shell /bin/sh alice -u 1001 -g 1001 \
-    && passwd -d alice \
-    && groupadd -g 1002 bob \
-    && useradd --create-home --shell /bin/sh bob -u 1002 -g 1002
+RUN groupadd -g 1001 bob \
+    && useradd --create-home --shell /bin/sh bob -u 1001 -g 1001 \
+    && passwd -d bob \
+    && groupadd -g 1002 alice \
+    && useradd --create-home --shell /bin/sh alice -u 1002 -g 1002
 
-RUN install -d -m 0700 -o alice -g alice /home/alice/.ssh \
-    && install -d -m 0700 -o bob -g bob /home/bob/.ssh \
+RUN install -d -m 0700 -o bob -g bob /home/bob/.ssh \
+    && install -d -m 0700 -o alice -g alice /home/alice/.ssh \
     && ssh-keygen -q -t ed25519 -N '' \
        -f /etc/ssh/test_ca \
     && ssh-keygen -q -t ed25519 -N '' \
-       -f /home/bob/.ssh/id_ed25519 \
-    && ssh-keygen -q -s /etc/ssh/test_ca -I bob -n alice \
-       -V -1m:+52w /home/bob/.ssh/id_ed25519.pub \
-    && install -d -m 0700 -o bob -g bob /home/bob/.ssh/dummy \
-    && cp /home/bob/.ssh/id_ed25519.pub /home/bob/.ssh/dummy/expired.pub \
-    && ssh-keygen -q -s /etc/ssh/test_ca -I expired -n alice \
-       -V -2d:-1d /home/bob/.ssh/dummy/expired.pub \
+       -f /home/alice/.ssh/id_ed25519 \
+    && ssh-keygen -q -s /etc/ssh/test_ca -I alice -n bob \
+       -V -1m:+52w /home/alice/.ssh/id_ed25519.pub \
+    && install -d -m 0700 -o alice -g alice /home/alice/.ssh/dummy \
+    && cp /home/alice/.ssh/id_ed25519.pub /home/alice/.ssh/dummy/expired.pub \
+    && ssh-keygen -q -s /etc/ssh/test_ca -I expired -n bob \
+       -V -2d:-1d /home/alice/.ssh/dummy/expired.pub \
     && ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/untrusted_ca \
-    && cp /home/bob/.ssh/id_ed25519.pub /home/bob/.ssh/dummy/untrusted.pub \
-    && ssh-keygen -q -s /etc/ssh/untrusted_ca -I untrusted -n alice \
-       -V -1m:+52w /home/bob/.ssh/dummy/untrusted.pub \
-    && cp /etc/ssh/untrusted_ca.pub /home/bob/.ssh/dummy/mismatched.pub \
-    && ssh-keygen -q -s /etc/ssh/untrusted_ca -I mismatched -n alice \
-       -V -1m:+52w /home/bob/.ssh/dummy/mismatched.pub \
+    && cp /home/alice/.ssh/id_ed25519.pub /home/alice/.ssh/dummy/untrusted.pub \
+    && ssh-keygen -q -s /etc/ssh/untrusted_ca -I untrusted -n bob \
+       -V -1m:+52w /home/alice/.ssh/dummy/untrusted.pub \
+    && cp /etc/ssh/untrusted_ca.pub /home/alice/.ssh/dummy/mismatched.pub \
+    && ssh-keygen -q -s /etc/ssh/untrusted_ca -I mismatched -n bob \
+       -V -1m:+52w /home/alice/.ssh/dummy/mismatched.pub \
     && rm /etc/ssh/untrusted_ca /etc/ssh/untrusted_ca.pub \
-    && rm /home/bob/.ssh/dummy/expired.pub \
-       /home/bob/.ssh/dummy/untrusted.pub \
-       /home/bob/.ssh/dummy/mismatched.pub \
+    && rm /home/alice/.ssh/dummy/expired.pub \
+       /home/alice/.ssh/dummy/untrusted.pub \
+       /home/alice/.ssh/dummy/mismatched.pub \
     && rm /etc/ssh/test_ca \
     && printf '%s\n' \
        'Host *' \
        '    HostName 127.0.0.1' \
        '    Port 2222' \
-       '    User alice' \
-       > /home/bob/.ssh/config \
-    && chmod 0600 /home/bob/.ssh/config \
-    && chown -R bob:bob /home/bob/.ssh
+       '    User bob' \
+       > /home/alice/.ssh/config \
+    && chmod 0600 /home/alice/.ssh/config \
+    && chown -R alice:alice /home/alice/.ssh
 
 RUN rm -f /etc/ssh/ssh_host_* \
     && ssh-keygen -q -t ed25519 -N '' \
@@ -84,11 +84,11 @@ RUN rm -f /etc/ssh/ssh_host_* \
     && { \
          printf '[127.0.0.1]:2222 '; \
          cat /etc/ssh/ssh_host_ed25519_key.pub; \
-       } > /home/bob/.ssh/known_hosts \
-    && ssh-keygen -H -f /home/bob/.ssh/known_hosts \
-    && rm -f /home/bob/.ssh/known_hosts.old \
-    && chmod 0600 /home/bob/.ssh/known_hosts \
-    && chown bob:bob /home/bob/.ssh/known_hosts \
+       } > /home/alice/.ssh/known_hosts \
+    && ssh-keygen -H -f /home/alice/.ssh/known_hosts \
+    && rm -f /home/alice/.ssh/known_hosts.old \
+    && chmod 0600 /home/alice/.ssh/known_hosts \
+    && chown alice:alice /home/alice/.ssh/known_hosts \
     && mkdir -p /run/sshd \
     && printf '%s\n' \
        'ListenAddress 127.0.0.1' \
@@ -97,7 +97,7 @@ RUN rm -f /etc/ssh/ssh_host_* \
        'PerSourcePenalties no' \
        'HostKey /etc/ssh/ssh_host_ed25519_key' \
        'HostKeyAlgorithms ssh-ed25519' \
-       'AllowUsers alice' \
+       'AllowUsers bob' \
        'PubkeyAuthentication yes' \
        'AuthenticationMethods publickey' \
        'AuthorizedKeysFile none' \
@@ -112,8 +112,8 @@ RUN rm -f /etc/ssh/ssh_host_* \
        'AllowStreamLocalForwarding yes' \
        > /etc/ssh/sshd_config
 
-COPY --chown=bob:bob --from=toolchain /dist/run-test /opt/tests/run-test
-COPY --chown=bob:bob --from=toolchain /dist/entrypoint.sh /opt/tests/test-entrypoint
+COPY --chown=alice:alice --from=toolchain /dist/run-test /opt/tests/run-test
+COPY --chown=alice:alice --from=toolchain /dist/entrypoint.sh /opt/tests/test-entrypoint
 RUN chmod 0700 /opt/tests/test-entrypoint
 
 ENTRYPOINT ["/opt/tests/test-entrypoint"]

@@ -14,7 +14,7 @@ fn setup_conf<'a>(append: impl IntoIterator<Item = &'a str>) -> Result<impl std:
     {
         let mut it = append.into_iter();
         if let Some(item) = it.next() {
-            conf.push_str("Host alice-test\n    ");
+            conf.push_str("Host bob-test\n    ");
             conf.push_str(item.trim());
             conf.push('\n');
         }
@@ -53,7 +53,7 @@ fn main() {
 
     rt.register("default CA and local certificate", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/id_ed25519-cert.pub",
@@ -69,7 +69,7 @@ fn main() {
 
     rt.register("no trusted CA", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/id_ed25519-cert.pub",
@@ -95,7 +95,7 @@ fn main() {
 
     rt.register("unrelated CA", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/id_ed25519-cert.pub",
@@ -121,7 +121,7 @@ fn main() {
 
     rt.register("trusted CA but wrong host principal", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "HostName localhost",
                 "IdentityFile ~/.ssh/id_ed25519",
@@ -148,7 +148,7 @@ fn main() {
 
     rt.register("valid CA among unrelated CAs", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/id_ed25519-cert.pub",
@@ -164,7 +164,7 @@ fn main() {
     });
 
     rt.register("local private key without certificate", async || {
-        let host = parse_target("alice-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         match Connection::connect(&host, known_hosts).await {
@@ -184,7 +184,7 @@ fn main() {
 
     rt.register("certificate for another key", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/dummy/mismatched-cert.pub",
@@ -209,7 +209,7 @@ fn main() {
 
     rt.register("certificate signed by untrusted CA", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/dummy/untrusted-cert.pub",
@@ -234,7 +234,7 @@ fn main() {
 
     rt.register("expired certificate", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/dummy/expired-cert.pub",
@@ -259,7 +259,7 @@ fn main() {
 
     rt.register("certificate not yet valid", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityFile ~/.ssh/id_ed25519",
                 "CertificateFile ~/.ssh/dummy/not-yet-valid-cert.pub",

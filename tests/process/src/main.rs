@@ -12,7 +12,7 @@ fn setup_conf(append: &str) -> Result<impl std::io::Read, Error> {
     let default_path = home.join(".ssh/config");
     let mut conf = std::fs::read_to_string(default_path)?;
     if !append.is_empty() {
-        conf.push_str("Host alice-test\n");
+        conf.push_str("Host bob-test\n");
         conf.push_str(append);
     }
     Ok(Cursor::new(conf.into_bytes()))
@@ -47,7 +47,7 @@ fn main() {
     let mut rt = t::runtime();
 
     rt.register("simple command", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -73,7 +73,7 @@ fn main() {
     });
 
     rt.register("redirect", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -120,7 +120,7 @@ fn main() {
     });
 
     rt.register("failed command", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -139,7 +139,7 @@ fn main() {
     });
 
     rt.register("control flows", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -210,7 +210,7 @@ fn main() {
     });
 
     rt.register("cat stdin", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -258,7 +258,7 @@ fn main() {
     });
 
     rt.register("expand command", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -287,7 +287,7 @@ fn main() {
     });
 
     rt.register("shell request", async || {
-        let host = parse_target("alice-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;

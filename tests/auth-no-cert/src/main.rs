@@ -13,7 +13,7 @@ fn setup_conf<'a>(append: impl IntoIterator<Item = &'a str>) -> Result<impl std:
     {
         let mut it = append.into_iter();
         if let Some(item) = it.next() {
-            conf.push_str("Host alice-test\n    ");
+            conf.push_str("Host bob-test\n    ");
             conf.push_str(item.trim());
             conf.push('\n');
         }
@@ -54,7 +54,7 @@ fn main() {
     let mut rt = t::runtime();
 
     rt.register("local private key", async || {
-        let host = parse_target("alice-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -64,7 +64,7 @@ fn main() {
     });
 
     rt.register("invalid local private key", async || {
-        let host = parse_target("alice-test", ["IdentityFile ~/.ssh/unknown_id"])?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/unknown_id"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         match Connection::connect(&host, known_hosts).await {
@@ -83,7 +83,7 @@ fn main() {
     });
 
     rt.register("agent by env, try all", async || {
-        let host = parse_target("alice-test", ["IdentityAgent $MY_AGENT_SOCK"])?;
+        let host = parse_target("bob-test", ["IdentityAgent $MY_AGENT_SOCK"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         match Connection::connect(&host, known_hosts).await {
@@ -103,7 +103,7 @@ fn main() {
 
     rt.register("agent by env, IdentitiesOnly yes", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent $MY_AGENT_SOCK",
                 "IdentitiesOnly yes",
@@ -116,7 +116,7 @@ fn main() {
         t::finish(&conn).await?;
 
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent $MY_AGENT_SOCK",
                 "IdentitiesOnly yes",
@@ -135,7 +135,7 @@ fn main() {
         "agent with IdentitiesOnly yes, but with invalid key",
         async || {
             let host = parse_target(
-                "alice-test",
+                "bob-test",
                 [
                     "IdentityAgent $MY_AGENT_SOCK",
                     "IdentitiesOnly yes",
@@ -161,7 +161,7 @@ fn main() {
     );
 
     rt.register("agent by path, try all", async || {
-        let host = parse_target("alice-test", ["IdentityAgent ~/.ssh/agent.sock"])?;
+        let host = parse_target("bob-test", ["IdentityAgent ~/.ssh/agent.sock"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         match Connection::connect(&host, known_hosts).await {
@@ -181,7 +181,7 @@ fn main() {
 
     rt.register("agent by path, IdentitiesOnly yes", async || {
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent ~/.ssh/agent.sock",
                 "IdentitiesOnly yes",
@@ -194,7 +194,7 @@ fn main() {
         t::finish(&conn).await?;
 
         let host = parse_target(
-            "alice-test",
+            "bob-test",
             [
                 "IdentityAgent ~/.ssh/agent.sock",
                 "IdentitiesOnly yes",

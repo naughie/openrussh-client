@@ -4,7 +4,7 @@ set -eu
 /usr/sbin/sshd -t
 /usr/sbin/sshd -e
 
-exec runuser -u bob -- /bin/sh -eu -c '
+exec runuser -u alice -- /bin/sh -eu -c '
     _agent_pids=""
     for _kind in valid expired untrusted; do
         case "$_kind" in

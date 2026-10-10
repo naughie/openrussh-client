@@ -35,28 +35,28 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -g 1001 alice \
-    && useradd --create-home --shell /bin/sh alice -u 1001 -g 1001 \
-    && passwd -d alice \
-    && groupadd -g 1002 bob \
-    && useradd --create-home --shell /bin/sh bob -u 1002 -g 1002
+RUN groupadd -g 1001 bob \
+    && useradd --create-home --shell /bin/sh bob -u 1001 -g 1001 \
+    && passwd -d bob \
+    && groupadd -g 1002 alice \
+    && useradd --create-home --shell /bin/sh alice -u 1002 -g 1002
 
-RUN install -d -m 0700 -o alice -g alice /home/alice/.ssh \
-    && install -d -m 0700 -o bob -g bob /home/bob/.ssh \
+RUN install -d -m 0700 -o bob -g bob /home/bob/.ssh \
+    && install -d -m 0700 -o alice -g alice /home/alice/.ssh \
     && ssh-keygen -q -t ed25519 -N '' \
-       -f /home/bob/.ssh/id_ed25519 \
-    && install -m 0600 -o alice -g alice \
-       /home/bob/.ssh/id_ed25519.pub \
-       /home/alice/.ssh/authorized_keys \
-    && rm /home/bob/.ssh/id_ed25519.pub \
+       -f /home/alice/.ssh/id_ed25519 \
+    && install -m 0600 -o bob -g bob \
+       /home/alice/.ssh/id_ed25519.pub \
+       /home/bob/.ssh/authorized_keys \
+    && rm /home/alice/.ssh/id_ed25519.pub \
     && printf '%s\n' \
        'Host *' \
        '    HostName 127.0.0.1' \
        '    Port 2222' \
-       '    User alice' \
-       > /home/bob/.ssh/config \
-    && chmod 0600 /home/bob/.ssh/config \
-    && chown -R bob:bob /home/bob/.ssh
+       '    User bob' \
+       > /home/alice/.ssh/config \
+    && chmod 0600 /home/alice/.ssh/config \
+    && chown -R alice:alice /home/alice/.ssh
 
 RUN rm -f /etc/ssh/ssh_host_* \
     && ssh-keygen -q -t ed25519 -N '' \
@@ -64,17 +64,17 @@ RUN rm -f /etc/ssh/ssh_host_* \
     && { \
          printf '[127.0.0.1]:2222 '; \
          cat /etc/ssh/ssh_host_ed25519_key.pub; \
-       } > /home/bob/.ssh/known_hosts \
-    && ssh-keygen -H -f /home/bob/.ssh/known_hosts \
-    && rm -f /home/bob/.ssh/known_hosts.old \
-    && chmod 0600 /home/bob/.ssh/known_hosts \
-    && chown bob:bob /home/bob/.ssh/known_hosts \
+       } > /home/alice/.ssh/known_hosts \
+    && ssh-keygen -H -f /home/alice/.ssh/known_hosts \
+    && rm -f /home/alice/.ssh/known_hosts.old \
+    && chmod 0600 /home/alice/.ssh/known_hosts \
+    && chown alice:alice /home/alice/.ssh/known_hosts \
     && mkdir -p /run/sshd \
     && printf '%s\n' \
        'ListenAddress 127.0.0.1' \
        'Port 2222' \
        'HostKey /etc/ssh/ssh_host_ed25519_key' \
-       'AllowUsers alice' \
+       'AllowUsers bob' \
        'PubkeyAuthentication yes' \
        'AuthenticationMethods publickey' \
        'AuthorizedKeysFile .ssh/authorized_keys' \
@@ -87,8 +87,8 @@ RUN rm -f /etc/ssh/ssh_host_* \
        'AllowStreamLocalForwarding yes' \
        > /etc/ssh/sshd_config
 
-COPY --chown=bob:bob --from=toolchain /dist/run-test /opt/tests/run-test
-COPY --chown=bob:bob --from=toolchain /dist/entrypoint.sh /opt/tests/test-entrypoint
+COPY --chown=alice:alice --from=toolchain /dist/run-test /opt/tests/run-test
+COPY --chown=alice:alice --from=toolchain /dist/entrypoint.sh /opt/tests/test-entrypoint
 RUN chmod 0700 /opt/tests/test-entrypoint
 
 ENTRYPOINT ["/opt/tests/test-entrypoint"]
