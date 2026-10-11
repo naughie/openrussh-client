@@ -876,30 +876,30 @@ pub enum KeyType {
 pub fn check_pub_or_priv(path: &Path) -> KeyType {
     fn check_impl(path: &Path) -> std::io::Result<KeyType> {
         use std::fs::File;
-        use std::io::{BufRead as _, BufReader};
+        use std::io::Read as _;
 
-        let mut f = BufReader::new(File::open(path)?);
+        let mut buf = [0u8; 40];
 
-        let mut buf = String::new();
-        f.read_line(&mut buf)?;
-
-        let line = buf.trim_ascii_start();
-        if line.is_empty() {
-            return Ok(KeyType::Error);
+        {
+            let mut f = File::open(path)?;
+            f.read_exact(&mut buf)?;
         }
 
-        if line.starts_with("-----BEGIN ") || line.starts_with("---- BEGIN ") {
-            if line.contains("PRIVATE") {
-                Ok(KeyType::MaybePrivate)
-            } else if line.contains("PUBLIC") {
+        let contains_private = |s: &[u8]| {
+            const NEEDLE: &[u8] = b"PRIVATE";
+            s.windows(NEEDLE.len()).any(|win| win == NEEDLE)
+        };
+
+        if let Some(rest) = buf.strip_prefix(b"-----BEGIN ") {
+            if rest.starts_with(b"PUBLIC") {
                 Ok(KeyType::MaybePublic)
+            } else if contains_private(rest) {
+                Ok(KeyType::MaybePrivate)
             } else {
                 Ok(KeyType::Error)
             }
-        } else if line.contains(' ') {
-            Ok(KeyType::MaybePublic)
         } else {
-            Ok(KeyType::Error)
+            Ok(KeyType::MaybePublic)
         }
     }
 
