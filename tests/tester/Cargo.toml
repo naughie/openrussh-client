@@ -5,6 +5,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-libtest-mimic = "0.8"
-openrussh-client = { path = "../.." }
-tokio = { version = "1", features = ["full"] }
+libtest-mimic.workspace = true
+openrussh-client.workspace = true
+tokio.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "openrussh-client"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 
 authors = ["Masato Nakata <masaton@naughie.com>"]
@@ -12,6 +12,8 @@ keywords = ["asnyc", "crypto", "openssh", "ssh"]
 categories = ["asynchronous", "authentication", "cryptography"]
 
 description = "Russh client wrapper with supporting OpenSSH files"
+
+exclude = ["/tests/", ".dockerignore"]
 
 [dependencies]
 russh = { version = "0.64", default-features = false }
