@@ -293,4 +293,5 @@ pub mod known_hosts;
 #[cfg(feature = "cmd")]
 pub mod process;
 
+pub use russh;
 pub use ssh2_config;
