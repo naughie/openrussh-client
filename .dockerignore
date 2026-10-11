@@ -6,4 +6,3 @@ target
 Cargo.lock
 
 /tests/x.sh
-/tests/**/test.sh
