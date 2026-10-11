@@ -17,5 +17,7 @@ exec runuser -u alice -- ssh-agent -a "$MY_AGENT_SOCK" /bin/sh -eu -c '
 
     ssh-add "$HOME/.ssh/unknown_id" >/dev/null 2>&1
     ssh-add "$HOME/.ssh/id_ed25519" >/dev/null 2>&1
+
+    unset SSH_AUTH_SOCK
     exec "$@"
 ' sh "$@"

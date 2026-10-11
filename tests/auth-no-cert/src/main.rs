@@ -1,12 +1,13 @@
-use t::Error;
 use t::openrussh_client;
 
 use openrussh_client::config::Chain;
 
-fn setup_conf<'a>(append: impl IntoIterator<Item = &'a str>) -> Result<impl std::io::Read, Error> {
+fn setup_conf<'a>(
+    append: impl IntoIterator<Item = &'a str>,
+) -> Result<impl std::io::Read, t::Error> {
     use std::io::Cursor;
 
-    let home = std::env::home_dir().unwrap();
+    let home = t::home_dir()?;
     let default_path = home.join(".ssh/config");
     let mut conf = std::fs::read_to_string(default_path)?;
 
@@ -27,7 +28,10 @@ fn setup_conf<'a>(append: impl IntoIterator<Item = &'a str>) -> Result<impl std:
     Ok(Cursor::new(conf.into_bytes()))
 }
 
-fn parse_target<'a>(host: &str, append: impl IntoIterator<Item = &'a str>) -> Result<Chain, Error> {
+fn parse_target<'a>(
+    host: &str,
+    append: impl IntoIterator<Item = &'a str>,
+) -> Result<Chain, t::Error> {
     use openrussh_client::config::Target;
     use openrussh_client::ssh2_config::{ParseRule, SshConfig};
     use std::io::BufReader;
@@ -47,18 +51,13 @@ fn main() {
     use openrussh_client::error::{AuthError, ConnectError};
     use openrussh_client::known_hosts::KnownHosts;
 
-    unsafe {
-        std::env::remove_var("SSH_AUTH_SOCK");
-    }
-
     let mut rt = t::runtime();
 
     rt.register("local private key", async || {
         let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        let conn = Connection::connect(&host, known_hosts).await?;
-        t::finish(&conn).await?;
+        t::assert_connect_succeeded(Connection::connect(&host, known_hosts)).await?;
 
         Ok(())
     });
@@ -67,17 +66,12 @@ fn main() {
         let host = parse_target("bob-test", ["IdentityFile ~/.ssh/unknown_id"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        match Connection::connect(&host, known_hosts).await {
-            Ok(conn) => {
-                t::finish(&conn).await?;
-
-                t::error("expected the authentication failed, but succeeded")?;
-            }
-            Err(ConnectError::AuthFailure) => {}
-            Err(e) => {
-                t::error(e)?;
-            }
-        }
+        t::assert_connect_failed(
+            Connection::connect(&host, known_hosts),
+            |e| matches!(e, ConnectError::AuthFailure),
+            "expected AuthFailure",
+        )
+        .await?;
 
         Ok(())
     });
@@ -86,17 +80,12 @@ fn main() {
         let host = parse_target("bob-test", ["IdentityAgent $MY_AGENT_SOCK"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        match Connection::connect(&host, known_hosts).await {
-            Ok(conn) => {
-                t::finish(&conn).await?;
-
-                t::error("expected the authentication failed, but succeeded")?;
-            }
-            Err(ConnectError::AuthError(AuthError::RequestAgent(_))) => {}
-            Err(e) => {
-                t::error(e)?;
-            }
-        }
+        t::assert_connect_failed(
+            Connection::connect(&host, known_hosts),
+            |e| matches!(e, ConnectError::AuthError(AuthError::RequestAgent(_))),
+            "expected RequestAgent",
+        )
+        .await?;
 
         Ok(())
     });
@@ -112,8 +101,7 @@ fn main() {
         )?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        let conn = Connection::connect(&host, known_hosts).await?;
-        t::finish(&conn).await?;
+        t::assert_connect_succeeded(Connection::connect(&host, known_hosts)).await?;
 
         let host = parse_target(
             "bob-test",
@@ -125,8 +113,7 @@ fn main() {
         )?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        let conn = Connection::connect(&host, known_hosts).await?;
-        t::finish(&conn).await?;
+        t::assert_connect_succeeded(Connection::connect(&host, known_hosts)).await?;
 
         Ok(())
     });
@@ -144,17 +131,12 @@ fn main() {
             )?;
             let known_hosts = KnownHosts::parse_default_path()?;
 
-            match Connection::connect(&host, known_hosts).await {
-                Ok(conn) => {
-                    t::finish(&conn).await?;
-
-                    t::error("expected the authentication failed, but succeeded")?;
-                }
-                Err(ConnectError::AuthFailure) => {}
-                Err(e) => {
-                    t::error(e)?;
-                }
-            }
+            t::assert_connect_failed(
+                Connection::connect(&host, known_hosts),
+                |e| matches!(e, ConnectError::AuthFailure),
+                "expected AuthFailure",
+            )
+            .await?;
 
             Ok(())
         },
@@ -164,17 +146,12 @@ fn main() {
         let host = parse_target("bob-test", ["IdentityAgent ~/.ssh/agent.sock"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        match Connection::connect(&host, known_hosts).await {
-            Ok(conn) => {
-                t::finish(&conn).await?;
-
-                t::error("expected the authentication failed, but succeeded")?;
-            }
-            Err(ConnectError::AuthError(AuthError::RequestAgent(_))) => {}
-            Err(e) => {
-                t::error(e)?;
-            }
-        }
+        t::assert_connect_failed(
+            Connection::connect(&host, known_hosts),
+            |e| matches!(e, ConnectError::AuthError(AuthError::RequestAgent(_))),
+            "expected RequestAgent",
+        )
+        .await?;
 
         Ok(())
     });
@@ -190,8 +167,7 @@ fn main() {
         )?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        let conn = Connection::connect(&host, known_hosts).await?;
-        t::finish(&conn).await?;
+        t::assert_connect_succeeded(Connection::connect(&host, known_hosts)).await?;
 
         let host = parse_target(
             "bob-test",
@@ -203,8 +179,7 @@ fn main() {
         )?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
-        let conn = Connection::connect(&host, known_hosts).await?;
-        t::finish(&conn).await?;
+        t::assert_connect_succeeded(Connection::connect(&host, known_hosts)).await?;
 
         Ok(())
     });

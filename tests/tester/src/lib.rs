@@ -16,6 +16,7 @@ pub use tokio;
 
 use std::convert::Infallible;
 use std::fmt;
+use std::path::PathBuf;
 
 use openrussh_client::connect::{Connection, Handler};
 
@@ -43,4 +44,12 @@ pub async fn finish<H: Handler>(conn: &Connection<H>) -> Result<(), Error> {
     conn.disconnect(Disconnect::ByApplication, "test is done", "en")
         .await?;
     Ok(())
+}
+
+pub fn home_dir() -> Result<PathBuf, Error> {
+    if let Some(path) = std::env::home_dir() {
+        Ok(path)
+    } else {
+        error("could not get the home directory").map(|v| match v {})
+    }
 }
