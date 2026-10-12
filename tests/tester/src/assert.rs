@@ -197,3 +197,29 @@ where
         }
     }
 }
+
+pub fn assert_cmd_output(
+    output: std::process::Output,
+    expected_stdout: impl PartialEq<String> + fmt::Debug + 'static,
+    expected_stderr: impl PartialEq<String> + fmt::Debug + 'static,
+    expected_status: impl PartialEq<Option<i32>> + fmt::Debug + 'static,
+    msg: impl fmt::Display + 'static,
+) -> Result<(), Error> {
+    assert_eq(
+        expected_stdout,
+        String::from_utf8_lossy_owned(output.stdout),
+        format!("stdout of {msg}"),
+    )?;
+    assert_eq(
+        expected_stderr,
+        String::from_utf8_lossy_owned(output.stderr),
+        format!("stderr of {msg}"),
+    )?;
+    assert_eq(
+        expected_status,
+        output.status.code(),
+        format!("exit status of {msg}"),
+    )?;
+
+    Ok(())
+}

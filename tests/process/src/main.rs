@@ -58,13 +58,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "Hello World\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "Hello World\n", "", Some(0), "echo")?;
 
         t::finish(&conn).await?;
 
@@ -101,17 +95,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "arg1\narg3\n",
-            "stdout",
-        )?;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stderr),
-            "arg2\narg4\n",
-            "stderr",
-        )?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "arg1\narg3\n", "arg2\narg4\n", Some(0), "redirect")?;
 
         t::finish(&conn).await?;
 
@@ -128,9 +112,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stdout), "", "stdout")?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(1), "exit")?;
+        t::assert_cmd_output(output, "", "", Some(1), "false")?;
 
         t::finish(&conn).await?;
 
@@ -152,13 +134,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "ok\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "ok\n", "", Some(0), "true && echo ok")?;
 
         let cmd = Command::new()
             .prog("true")
@@ -169,9 +145,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stdout), "", "stdout")?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "", "", Some(0), "true || echo ok")?;
 
         let cmd = Command::new()
             .prog("false")
@@ -182,9 +156,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stdout), "", "stdout")?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(1), "exit")?;
+        t::assert_cmd_output(output, "", "", Some(1), "false && echo ok")?;
 
         let cmd = Command::new()
             .prog("false")
@@ -195,13 +167,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "ok\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "ok\n", "", Some(0), "false || echo ok")?;
 
         t::finish(&conn).await?;
 
@@ -243,13 +209,17 @@ fn main() {
 
         let status = child.wait().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(stdout),
+        t::assert_cmd_output(
+            std::process::Output {
+                status,
+                stdout,
+                stderr,
+            },
             "Hello World\n",
-            "stdout",
+            "",
+            Some(0),
+            "cat",
         )?;
-        t::assert_eq(String::from_utf8_lossy_owned(stderr), "", "stderr")?;
-        t::assert_eq(status.code(), Some(0), "exit")?;
 
         t::finish(&conn).await?;
 
@@ -272,13 +242,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
 
         let output = child.wait_with_output().await;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "my uid is 1001\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "my uid is 1001\n", "", Some(0), "echo")?;
 
         t::finish(&conn).await?;
 
@@ -348,17 +312,17 @@ fn main() {
 
         let status = child.wait().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(stdout),
+        t::assert_cmd_output(
+            std::process::Output {
+                status,
+                stdout,
+                stderr,
+            },
             "Hello\nSee you\n",
-            "stdout",
-        )?;
-        t::assert_eq(
-            String::from_utf8_lossy_owned(stderr),
             "Hello again\nGood bye\n",
-            "stderr",
+            Some(0),
+            "shell",
         )?;
-        t::assert_eq(status.code(), Some(0), "exit")?;
 
         t::finish(&conn).await?;
 

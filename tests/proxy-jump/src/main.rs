@@ -72,13 +72,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
         let output = child.wait_with_output().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "bob1\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "bob1\n", "", Some(0), "id -un")?;
 
         t::finish(&conn).await?;
 
@@ -111,13 +105,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
         let output = child.wait_with_output().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "bob1\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "bob1\n", "", Some(0), "id -un")?;
 
         t::finish(&conn).await?;
 
@@ -154,13 +142,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
         let output = child.wait_with_output().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "bob1\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "bob1\n", "", Some(0), "id -un")?;
 
         t::finish(&conn).await?;
 
@@ -201,13 +183,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
         let output = child.wait_with_output().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "bob1\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "bob1\n", "", Some(0), "id -un")?;
 
         t::finish(&conn).await?;
 
@@ -238,13 +214,7 @@ fn main() {
         let child = conn.exec(cmd).await?;
         let output = child.wait_with_output().await;
 
-        t::assert_eq(
-            String::from_utf8_lossy_owned(output.stdout),
-            "bob1\n",
-            "stdout",
-        )?;
-        t::assert_eq(String::from_utf8_lossy_owned(output.stderr), "", "stderr")?;
-        t::assert_eq(output.status.code(), Some(0), "exit")?;
+        t::assert_cmd_output(output, "bob1\n", "", Some(0), "id -un")?;
 
         t::finish(&conn).await?;
 
