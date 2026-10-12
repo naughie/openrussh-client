@@ -160,6 +160,10 @@ impl KnownHostsHandler {
 
     pub fn check_cert(&self, cert: &Certificate) -> MatchResult {
         if let Some((cas, host)) = &self.cas {
+            if !cert.cert_type().is_host() {
+                return MatchResult::CertNotVerified;
+            }
+
             if !cert.critical_options().is_empty() {
                 return MatchResult::UnknownCriticalOptions;
             }
@@ -394,6 +398,7 @@ pub enum MatchResult {
     ///
     /// - The timestamp is invalid (expired or not yet valid).
     /// - Either the payload or the signature is corrupted.
+    /// - The certificate type is not [`host`](russh::keys::ssh_key::certificate::CertType::Host).
     /// - We encounter an error when we get the current Unix timestamp.
     /// - No CAs matched the requested host.
     /// - One or more CAs are found, but no one can verity the certificate.

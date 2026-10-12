@@ -37,6 +37,7 @@ impl Display for AuthError {
             ),
             Self::LoadPrivkey(e) => write!(f, "Could not load IdentityFile: {e}"),
             Self::LoadCert(e) => write!(f, "Could not load CertificateFile: {e}"),
+            Self::HostCert => write!(f, "The type of CertificateFile is host"),
             Self::PubkeyMismatch => write!(
                 f,
                 "Public keys from `IdentityFile` and `CertificateFile` are mismatched"
@@ -63,6 +64,7 @@ impl StdError for AuthError {
         match self {
             Self::LoadPrivkey(e) => Some(e),
             Self::LoadCert(e) => Some(e),
+            Self::HostCert => None,
             Self::ConnectAgent(e) => Some(e),
             Self::RequestAgent(e) => Some(e),
             Self::Connection(e) => Some(e),

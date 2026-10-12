@@ -30,6 +30,9 @@ pub enum Error {
     LoadPrivkey(russh::keys::Error),
     /// Could not load the certificate from file.
     LoadCert(russh::keys::ssh_key::Error),
+    /// The type of `CertificateFile` is
+    /// [`host`](russh::keys::ssh_key::certificate::CertType::Host).
+    HostCert,
 
     /// Public keys, one given by `IdentityFile` and one extracted from `CertificateFile`, are
     /// not equal.
@@ -140,7 +143,12 @@ mod helper {
     }
 
     pub(super) fn load_cert_local(cert: &Path) -> Result<Certificate, Error> {
-        russh::keys::load_openssh_certificate(cert).map_err(Error::LoadCert)
+        let cert = russh::keys::load_openssh_certificate(cert).map_err(Error::LoadCert)?;
+        if cert.cert_type().is_user() {
+            Ok(cert)
+        } else {
+            Err(Error::HostCert)
+        }
     }
 
     pub(super) async fn auth_by_priv_local<H: Handler>(
@@ -380,6 +388,10 @@ impl<'a, H: Handler, S: AgentStream + Unpin + Send> Authenticator<'a, H, AgentCl
                     helper::auth_by_pub_agent(key, &mut self.agent, self.user, self.handle).await
                 }
                 AgentIdentity::Certificate { certificate, .. } => {
+                    if !certificate.cert_type().is_user() {
+                        continue;
+                    }
+
                     helper::auth_by_cert_agent(certificate, &mut self.agent, self.user, self.handle)
                         .await
                 }
