@@ -236,14 +236,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cmd() {
+    fn simple_cmd() {
         let cmd = Command::new()
             .prog("echo")
             .arg("Hello")
             .arg("World")
             .complete(false);
         assert_eq!(cmd.as_str(), "'echo' 'Hello' 'World' ; ");
+    }
 
+    #[test]
+    fn env_init() {
+        let cmd = Command::new()
+            .env("ENV1", "value1")
+            .env("ENV2", "value'2")
+            .env("ENV3", Env("ENV"))
+            .prog("echo")
+            .complete(false);
+        assert_eq!(
+            cmd.as_str(),
+            "ENV1='value1' ENV2='value'\\''2' ENV3=\"${ENV}\" 'echo' ; "
+        );
+
+        let cmd = Command::new()
+            .envs([("ENV1", "value1"), ("ENV2", "value'2")])
+            .env("ENV3", Env("ENV"))
+            .prog("echo")
+            .complete(false);
+        assert_eq!(
+            cmd.as_str(),
+            "ENV1='value1' ENV2='value'\\''2' ENV3=\"${ENV}\" 'echo' ; "
+        );
+    }
+
+    #[test]
+    fn redir() {
         let cmd = Command::new()
             .prog("echo")
             .redirect(Redirect::Stdin {
@@ -276,7 +303,10 @@ mod tests {
             cmd.as_str(),
             "'echo' <'abc' <&0 >>'abc' >&2 2>>'abc' 2>&1 4<>&3 & "
         );
+    }
 
+    #[test]
+    fn complex_env_expansion() {
         let cmd = Command::new()
             .prog("echo")
             .arg(("I'm ", Env("my_name")))
@@ -289,5 +319,72 @@ mod tests {
             cmd.as_str(),
             r#"'echo' "I'm ${my_name}" >"./${my_name}.txt" ; "#
         );
+    }
+
+    #[test]
+    fn illegal_env() {
+        let cmd = Command::new()
+            .env("ILLEGAL ENV", "foo")
+            .env("?ENV", "bar")
+            .env("", "empty")
+            .prog("echo")
+            .complete(false);
+        assert_eq!(cmd.as_str(), "ILLEGAL='foo' 'echo' ; ");
+
+        fn test_impl_ok1(b: u8) {
+            let buf = [b];
+            let key = std::str::from_utf8(&buf).unwrap();
+
+            let cmd = Command::new().env(key, "foo").prog("echo").complete(false);
+            let expected = format!("{key}='foo' 'echo' ; ");
+            assert_eq!(cmd.as_str(), &expected);
+        }
+        fn test_impl_ok2(b: u8) {
+            let buf = [b'a', b];
+            let key = std::str::from_utf8(&buf).unwrap();
+
+            let cmd = Command::new().env(key, "foo").prog("echo").complete(false);
+            let expected = format!("{key}='foo' 'echo' ; ");
+            assert_eq!(cmd.as_str(), &expected);
+        }
+        fn test_impl_fail1(b: u8) {
+            let buf = [b];
+            let key = std::str::from_utf8(&buf).unwrap();
+
+            let cmd = Command::new().env(key, "foo").prog("echo").complete(false);
+            assert_eq!(cmd.as_str(), "'echo' ; ");
+        }
+        fn test_impl_fail2(b: u8) {
+            let buf = [b'a', b];
+            let key = std::str::from_utf8(&buf).unwrap();
+
+            let cmd = Command::new().env(key, "foo").prog("echo").complete(false);
+            assert_eq!(cmd.as_str(), "a='foo' 'echo' ; ");
+        }
+
+        for b in 0u8..=0x7fu8 {
+            let (ok1, ok2) = match b {
+                0..0x30 => (false, false),
+                0x30..0x3a => (false, true),
+                0x3a..0x41 => (false, false),
+                0x41..0x5b => (true, true),
+                0x5b..0x5f => (false, false),
+                0x5f => (true, true),
+                0x60 => (false, false),
+                0x61..0x7b => (true, true),
+                0x7b.. => (false, false),
+            };
+
+            if ok1 {
+                test_impl_ok1(b);
+            } else {
+                test_impl_fail1(b);
+            }
+            if ok2 {
+                test_impl_ok2(b);
+            } else {
+                test_impl_fail2(b);
+            }
+        }
     }
 }

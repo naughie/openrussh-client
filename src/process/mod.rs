@@ -29,7 +29,26 @@ mod helpers {
     use core::fmt::NumBuffer;
 
     pub(super) fn env<A: Arg>(buf: &mut String, key: &str, value: A) {
-        buf.push_str(key);
+        {
+            let key_bytes = key.as_bytes();
+            let Some((&first, rest)) = key_bytes.split_first() else {
+                return;
+            };
+            if !(first == b'_' || ((first | 0x20).wrapping_sub(b'a') < 26)) {
+                return;
+            }
+            let idx = rest
+                .iter()
+                .position(|&b| {
+                    !(b == b'_'
+                        || ((b | 0x20).wrapping_sub(b'a') < 26)
+                        || b.wrapping_sub(b'0') < 10)
+                })
+                .unwrap_or(rest.len());
+            let idx = key.floor_char_boundary(idx + 1);
+
+            buf.push_str(&key[..idx]);
+        }
         if A::need_double() {
             buf.push_str("=\"");
             Escaper::new(buf, SurroundBy::Double).escape(value);
