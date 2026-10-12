@@ -792,6 +792,92 @@ Host test5
     }
 
     #[test]
+    fn include_conf() {
+        use std::io::Write as _;
+
+        let isolated_tmp = {
+            let mut isolated_tmp = tempfile::NamedTempFile::new().unwrap();
+
+            let saved_conf = "
+Host test2
+    Port 3333
+        ";
+            isolated_tmp.write_all(saved_conf.as_bytes()).unwrap();
+            isolated_tmp.flush().unwrap();
+            isolated_tmp
+        };
+
+        let grouped_tmp = {
+            use std::fs::File;
+
+            let dir = tempfile::tempdir().unwrap();
+            let confd = dir.path().join("conf.d/my-group");
+
+            std::fs::create_dir_all(&confd).unwrap();
+
+            let mut f = File::create(confd.join("alfa.conf")).unwrap();
+            let conf = "
+Host test1
+    User me
+        ";
+            f.write_all(conf.as_bytes()).unwrap();
+            f.flush().unwrap();
+
+            let mut f = File::create(confd.join("bravo.conf")).unwrap();
+            let conf = "
+Host test1
+    HostName test.com
+        ";
+            f.write_all(conf.as_bytes()).unwrap();
+            f.flush().unwrap();
+
+            let mut f = File::create(confd.join("charlie.conf")).unwrap();
+            let conf = "
+Host test2
+    User you
+    IdentityFile path
+        ";
+            f.write_all(conf.as_bytes()).unwrap();
+            f.flush().unwrap();
+
+            dir
+        };
+
+        let conf = format!(
+            "
+Include {}/conf.d/my-group/*.conf
+Include {}
+
+Host test1
+    Port 2222
+    IdentityFile path
+        ",
+            grouped_tmp.path().display(),
+            isolated_tmp.path().display(),
+        );
+
+        let host = query_config(&conf, "test1");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "test.com".to_owned(),
+                user: "me".to_owned(),
+                port: 2222,
+            }
+        );
+
+        let host = query_config(&conf, "test2");
+        assert_eq!(
+            host.dest,
+            Dest {
+                name: "test2".to_owned(),
+                user: "you".to_owned(),
+                port: 3333,
+            }
+        );
+    }
+
+    #[test]
     fn expand_tilde() {
         let home = std::env::home_dir().unwrap();
 
