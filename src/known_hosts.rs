@@ -127,7 +127,7 @@ impl KnownHostsHandler {
             pubkeys.sort_unstable();
         }
 
-        let cas = collect(known_hosts.cas.iter().filter_map(|(entry, _)| {
+        let cas = collect(known_hosts.cas.iter().filter_map(|entry| {
             if host_matched_known_hosts(&host, port_str, entry.host_patterns()) {
                 let pubkey = entry.public_key();
 
@@ -375,7 +375,7 @@ impl Handler for KnownHostsHandler {
 #[derive(Debug, Clone)]
 pub struct KnownHosts {
     public_keys: Vec<Entry>,
-    cas: Vec<(Entry, Fingerprint)>,
+    cas: Vec<Entry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -419,10 +419,7 @@ impl KnownHosts {
         for entry in known_hosts.into_iter().filter_map(|entry| entry.ok()) {
             match entry.marker() {
                 Some(&Marker::Revoked) => continue,
-                Some(&Marker::CertAuthority) => {
-                    let fp = Fingerprint::new(HashAlg::Sha256, entry.public_key().key_data());
-                    cas.push((entry, fp))
-                }
+                Some(&Marker::CertAuthority) => cas.push(entry),
                 None => public_keys.push(entry),
             }
         }
