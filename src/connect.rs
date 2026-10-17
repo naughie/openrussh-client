@@ -1,3 +1,12 @@
+//! Wrapper for establishing SSH connections and performing the authentication.
+//!
+//! This module exists as the integration layer between [`russh`] and our
+//! [`config`](crate::config)/[`auth`](crate::auth).
+//!
+//! The main entrypoint is [`Connection::connect()`]; but if you would like the more flexible
+//! controls on how to resolve the bastions, you can use [`connect()`] and [`connect_stream()`] as
+//! one-shot connectors.
+
 use crate::auth::Error as AuthError;
 use crate::auth::{AuthMethods, AuthResult, Authenticator};
 use crate::config::{Chain, Dest, Host};
@@ -12,6 +21,9 @@ pub use russh::Disconnect;
 
 use std::sync::Arc;
 
+/// One-shot version of [`Connection::connect()`], wrapping [`russh::client::connect()`] followed by the [authentication](crate::auth::auth()).
+///
+/// [`Error::ProxyJump`] will never happen.
 pub async fn connect<H: Handler + Send + 'static>(
     dest: &Dest,
     auth_methods: AuthMethods<'_>,
@@ -30,6 +42,9 @@ pub async fn connect<H: Handler + Send + 'static>(
     }
 }
 
+/// One-shot version of [`Connection::connect()`], wrapping [`russh::client::connect_stream()`] followed by the [authentication](crate::auth::auth()).
+///
+/// [`Error::ProxyJump`] will never happen.
 pub async fn connect_stream<S, H>(
     dest: &Dest,
     auth_methods: AuthMethods<'_>,
@@ -53,6 +68,8 @@ where
     }
 }
 
+/// A returned context of [`MakeHandler`]. It consists of your [`Handler`](russh::client::Handler)
+/// and the client side [`Config`](russh::client::Config).
 #[derive(Debug, Clone)]
 pub struct Context<H> {
     handler: H,
@@ -60,10 +77,12 @@ pub struct Context<H> {
 }
 
 impl<H> Context<H> {
+    /// Creates a new context.
     pub fn new(handler: H, conf: Arc<Config>) -> Self {
         Self { handler, conf }
     }
 
+    /// Creates a new context with the default [`Config`](russh::client::Config).
     pub fn with_default_conf(handler: H) -> Self {
         Self {
             handler,
@@ -76,6 +95,51 @@ impl<H> Context<H> {
     }
 }
 
+/// Creates a [`Handler`] for each bastion.
+///
+/// Since there can be multiple servers to connect (i.e., bastions), and since the [`Handler`]
+/// implementations can be different for different servers (e.g., differentiating the forwarding
+/// policies or host-key checkers), and furthermore client side's [`Config`](russh::client::Config)s can
+/// be different (most notably the [preferred algorithms](russh::Preferred)), our [`MakeHandler`]
+/// stands as a factory of various `Handler`s/`Config`s depending on the servers to connect.
+///
+/// The `Error` propagates to the caller: it will immediately stop the iteration over bastions and
+/// return the error.
+///
+/// # Usage
+///
+/// ```
+/// use openrussh_client::config::Host;
+/// use openrussh_client::connect::{Context, MakeHandler};
+///
+/// use russh::client::{Handler, Config};
+///
+/// use std::sync::Arc;
+///
+/// struct MyHandler {
+///     hostname: String,
+/// }
+///
+/// impl Handler for MyHandler {
+///     type Error = russh::Error;
+/// }
+///
+/// struct MyHandlerMaker {
+///     shared_conf: Arc<Config>,
+/// }
+///
+/// impl MakeHandler for MyHandlerMaker {
+///     type Handler = MyHandler;
+///     type Error = std::convert::Infallible;
+///
+///     fn make_handler(&self, host: &Host) -> Result<Context<Self::Handler>, Self::Error> {
+///         let handler = MyHandler {
+///             hostname: host.dest.name.to_string(),
+///         };
+///         Ok(Context::new(handler, self.shared_conf.clone()))
+///     }
+/// }
+/// ```
 pub trait MakeHandler {
     type Handler: Handler + Send + 'static;
     type Error;
@@ -91,6 +155,37 @@ impl<M: MakeHandler> MakeHandler for &M {
     }
 }
 
+/// Implements [`MakeHandler`] for [`Fn`]s.
+///
+/// ```
+/// use openrussh_client::config::Host;
+/// use openrussh_client::connect::{Context, MakeHandler, MakeHandlerFn};
+///
+/// use russh::client::{Handler, Config};
+///
+/// use std::sync::Arc;
+///
+/// struct MyHandler {
+///     hostname: String,
+/// }
+///
+/// impl Handler for MyHandler {
+///     type Error = russh::Error;
+/// }
+///
+/// fn make(make_handler: impl MakeHandler<Handler = MyHandler>) {}
+///
+/// let shared_conf = Arc::new(Config::default());
+///
+/// let make_handler = MakeHandlerFn(|host: &Host| {
+///     let handler = MyHandler {
+///         hostname: host.dest.name.to_string(),
+///     };
+///     let ctx = Context::new(handler, shared_conf.clone());
+///     Result::<_, std::convert::Infallible>::Ok(ctx)
+/// });
+/// make(make_handler);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct MakeHandlerFn<F>(pub F);
 
@@ -107,21 +202,29 @@ where
     }
 }
 
+/// Represents errors encountered during establishing SSH connections and authentication.
 pub enum Error<H: Handler, M = std::convert::Infallible> {
+    /// Unrecoverable error for authentication.
     AuthError(AuthError),
+    /// The user was not authenticated.
     AuthFailure,
+    /// Could not establish an SSH connection.
     Establish(H::Error),
+    /// Failed to [`Handle::channel_open_direct_tcpip()`].
     ProxyJump(russh::Error),
+    /// Could not [make a `Handler`](MakeHandler).
     MakeHandler(M),
 }
 
 impl<H: Handler, M> Error<H, M> {
+    /// Returns `true` if and only if it is `AuthFailure`.
     pub fn failed(&self) -> bool {
         matches!(self, Self::AuthFailure)
     }
 }
 
 impl<H: Handler> Error<H> {
+    /// Casts `M = Infallible` to an arbitrary `M`.
     pub fn cast<M>(self) -> Error<H, M> {
         match self {
             Self::AuthError(e) => Error::AuthError(e),
@@ -132,6 +235,11 @@ impl<H: Handler> Error<H> {
     }
 }
 
+/// Represents an authenticated SSH connection to the final target of a [`Chain`].
+///
+/// [`Connection::connect()`] establishes the connection through any bastions specified by
+/// `ProxyJump`, authenticating to each server along the way. The connections to the bastions
+/// are kept alive through the forwarding channels used by the target connection.
 pub struct Connection<H: Handler> {
     handle: Handle<H>,
 }
@@ -145,6 +253,7 @@ impl<H: Handler> Connection<H> {
         &mut self.handle
     }
 
+    /// Alias of [`Handle::disconnect()`].
     pub async fn disconnect(
         &self,
         reason: Disconnect,
@@ -156,6 +265,79 @@ impl<H: Handler> Connection<H> {
 }
 
 impl<H: Handler + Send + 'static> Connection<H> {
+    /// Establishes an SSH connection and authenticates to the final target of a [`Chain`].
+    ///
+    /// It follows [`Chain::iter()`], [`connect()`](russh::client::connect())ing
+    /// to the first server directly and then opening a
+    /// [`direct-tcpip` channel](Handle::channel_open_direct_tcpip()) for each subsequent server.
+    /// If there are no bastions, it [`connect()`](russh::client::connect())s
+    /// directly to the target.
+    ///
+    /// It stops immediately if errors occurred in any bastions.
+    ///
+    /// # Usage
+    ///
+    /// ```
+    /// # async fn dummy() {
+    /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+    /// use openrussh_client::config::{Host, Target};
+    /// use openrussh_client::connect::{Connection, Context, Disconnect, MakeHandler};
+    ///
+    /// use russh::client::{Handler, Config};
+    ///
+    /// use std::io::BufReader;
+    /// use std::sync::Arc;
+    ///
+    /// struct MyHandler {
+    ///     hostname: String,
+    /// }
+    ///
+    /// impl Handler for MyHandler {
+    ///     type Error = russh::Error;
+    /// }
+    ///
+    /// struct MyHandlerMaker {
+    ///     shared_conf: Arc<Config>,
+    /// }
+    ///
+    /// impl MakeHandler for MyHandlerMaker {
+    ///     type Handler = MyHandler;
+    ///     type Error = std::convert::Infallible;
+    ///
+    ///     fn make_handler(&self, host: &Host) -> Result<Context<Self::Handler>, Self::Error> {
+    ///         let handler = MyHandler {
+    ///             hostname: host.dest.name.to_string(),
+    ///         };
+    ///         Ok(Context::new(handler, self.shared_conf.clone()))
+    ///     }
+    /// }
+    ///
+    /// let ssh_config = r#"
+    /// Host host1
+    ///   IdentityFile priv1
+    /// Host host2
+    ///   IdentityFile priv2
+    ///   ProxyJump host1
+    /// Host host3
+    ///   IdentityFile priv3
+    ///   ProxyJump host2
+    /// "#;
+    /// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+    /// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+    ///
+    /// let target = Target::parse("host3");
+    /// let chain = target.query(&ssh_config).unwrap();
+    ///
+    /// let make_handler = MyHandlerMaker {
+    ///     shared_conf: Default::default(),
+    /// };
+    /// let conn = Connection::connect(&chain, make_handler).await.unwrap();
+    ///
+    /// conn.disconnect(Disconnect::ByApplication, "Done successfully", "en")
+    ///     .await
+    ///     .unwrap();
+    /// # }
+    /// ```
     pub async fn connect<M: MakeHandler<Handler = H>>(
         target: &Chain,
         make_handler: M,
