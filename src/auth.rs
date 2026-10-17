@@ -284,6 +284,113 @@ mod helper {
 /// The type parameter `A` means either 1) the unit type `()`, indicating that you use no SSH agents
 /// for the next authentication request, or 2) an [`AgentClient`] you initialized elsewhere or
 /// during the [`perform()`](Authenticator::perform()) method.
+///
+/// # Usage
+///
+/// The authentication "none":
+///
+/// ```
+/// use russh::client::Handler;
+///
+/// use openrussh_client::auth::{Authenticator, AuthMethod, AuthResult};
+///
+/// struct MyHandler;
+///
+/// impl Handler for MyHandler {
+///     type Error = russh::Error;
+/// }
+///
+/// # async fn dummy() {
+/// let handler = MyHandler;
+/// let mut handle = russh::client::connect(Default::default(), "127.0.0.1:22", handler).await.unwrap();
+///
+/// let res = Authenticator::new(&mut handle, "username").perform(AuthMethod::None).await;
+/// match res {
+///     Ok(AuthResult::Success) => println!("You are authenticated."),
+///     Ok(AuthResult::Failure) => println!("You are not authenticated."),
+///     Err(e) => println!("Error: {e}"),
+/// }
+/// # }
+/// ```
+///
+/// You can serve a local private key or a OpenSSH certificate:
+///
+/// ```
+/// use russh::client::Handler;
+///
+/// use openrussh_client::auth::{Authenticator, AuthLocalKind, AuthMethod, AuthResult};
+///
+/// struct MyHandler;
+///
+/// impl Handler for MyHandler {
+///     type Error = russh::Error;
+/// }
+///
+/// # async fn dummy() {
+/// let handler = MyHandler;
+/// let mut handle = russh::client::connect(Default::default(), "127.0.0.1:22", handler).await.unwrap();
+///
+/// // Serves the public key inside it, signed by this private key.
+/// let auth = AuthMethod::Local {
+///     kind: AuthLocalKind::LocalPriv {
+///         priv_key: "/path/to/id".as_ref(),
+///     },
+/// };
+/// let res = Authenticator::new(&mut handle, "username").perform(auth).await;
+/// match res {
+///     Ok(AuthResult::Success) => println!("You are authenticated."),
+///     Ok(AuthResult::Failure) => println!("You are not authenticated."),
+///     Err(e) => println!("Error: {e}"),
+/// }
+///
+/// // Serves the certificate, signed by the private key.
+/// // You should ensure that the public keys are identical.
+/// let auth = AuthMethod::Local {
+///     kind: AuthLocalKind::LocalCert {
+///         cert: "/path/to/certificate".as_ref(),
+///         priv_key: "/path/to/private_key".as_ref(),
+///     },
+/// };
+/// let res = Authenticator::new(&mut handle, "username").perform(auth).await;
+/// match res {
+///     Ok(AuthResult::Success) => println!("You are authenticated."),
+///     Ok(AuthResult::Failure) => println!("You are not authenticated."),
+///     Err(e) => println!("Error: {e}"),
+/// }
+/// # }
+/// ```
+///
+/// You can also use an SSH agent. There are five types of the authentication with the agent. See
+/// [`AuthAgentKind`] for the detailed behavior.
+///
+/// ```
+/// use russh::client::Handler;
+///
+/// use openrussh_client::auth::{AuthAgentKind, Authenticator, AuthMethod, AuthResult};
+///
+/// struct MyHandler;
+///
+/// impl Handler for MyHandler {
+///     type Error = russh::Error;
+/// }
+///
+/// # async fn dummy() {
+/// let handler = MyHandler;
+/// let mut handle = russh::client::connect(Default::default(), "127.0.0.1:22", handler).await.unwrap();
+///
+/// // Serves the identiteis (public key or certificate) one-by-one returned by the agent, signed by the agent.
+/// let auth = AuthMethod::Agent {
+///     agent: "/path/to/agent.sock".as_ref(),
+///     kind: AuthAgentKind::Full,
+/// };
+/// let res = Authenticator::new(&mut handle, "username").perform(auth).await;
+/// match res {
+///     Ok(AuthResult::Success) => println!("You are authenticated."),
+///     Ok(AuthResult::Failure) => println!("You are not authenticated."),
+///     Err(e) => println!("Error: {e}"),
+/// }
+/// # }
+/// ```
 pub struct Authenticator<'a, H: Handler, A = ()> {
     handle: &'a mut Handle<H>,
     user: &'a str,
@@ -518,12 +625,58 @@ pub enum AuthMethod<'a> {
     },
 }
 
-/// The stack of the [`AuthMethod`].
+/// The stack of the [`AuthMethod`]s.
+///
+/// If it has only one `AuthMethod`, then no extra allocation.
+/// If there are two or more, then it allocates a new `Vec`.
+///
+/// It is *not* require to contain [`AuthMethod::None`]; however, the default value
+/// [`AuthMethods::default()`] returns the singleton stack consisting of [`AuthMethod::None`].
+///
+/// # Usage
+///
+/// ```
+/// # fn dummy() {
+/// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+/// use openrussh_client::auth::{AuthMethods, AuthLocalKind, AuthMethod};
+/// use openrussh_client::config::Target;
+///
+/// use std::io::BufReader;
+///
+/// let ssh_config = r#"
+/// Host host
+///   IdentityFile priv
+/// "#;
+/// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+/// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+///
+/// let target = Target::parse("host");
+/// let chain = target.query(&ssh_config).unwrap();
+///
+/// let auths = AuthMethods::from_config(&chain.target.auth);
+/// let mut auth_it = auths.iter();
+///
+/// let auth = auth_it.next();
+/// assert!(auth.is_some_and(|a| matches!(a, AuthMethod::None)));
+///
+/// let auth = auth_it.next();
+/// assert!(auth.is_some_and(|a| matches!(
+///     a,
+///     AuthMethod::Local {
+///         kind: AuthLocalKind::LocalPriv { .. },
+///     },
+/// )));
+///
+/// assert!(auth_it.next().is_none());
+/// # }
+/// ```
+#[derive(Debug, Clone)]
 pub struct AuthMethods<'a> {
     inner: Either<AuthMethod<'a>, Vec<AuthMethod<'a>>>,
 }
 
 /// Iterator of [`AuthMethod`]s, returned by [`AuthMethods::iter()`].
+#[derive(Debug, Clone)]
 pub struct AuthMethodsIter<'a, 'b> {
     inner: Either<
         std::iter::Once<AuthMethod<'a>>,
@@ -610,6 +763,31 @@ impl<'a> AuthMethods<'a> {
     ///
     /// If `includes_none` is true, then the authentication method `none` comes first in the authentication
     /// stack. If false, then we interpret the config as-is.
+    ///
+    /// ```
+    /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+    /// use openrussh_client::auth::AuthMethods;
+    /// use openrussh_client::config::Target;
+    ///
+    /// use std::io::BufReader;
+    ///
+    /// let ssh_config = r#"
+    /// Host host
+    ///   IdentityFile priv
+    /// "#;
+    /// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+    /// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+    ///
+    /// let target = Target::parse("host");
+    /// let mut chain = target.query(&ssh_config).unwrap();
+    ///
+    /// // `auths` starts with `AuthMethod::None`, then `AuthMethod::Local { kind: AuthLocalKind::LoadPrivkey }`.
+    /// let auths = AuthMethods::from_config(&chain.target.auth);
+    ///
+    /// // `auths` contains `AuthMethod::Local { kind: AuthLocalKind::LoadPrivkey }` only.
+    /// chain.target.auth.includes_none = false;
+    /// let auths = AuthMethods::from_config(&chain.target.auth);
+    /// ```
     pub fn from_config(auth: &'a AuthConfig) -> Self {
         if auth.includes_none {
             Self::from_config_with_none(auth)
@@ -627,17 +805,67 @@ impl<'a> AuthMethods<'a> {
         AuthMethodsIter { inner }
     }
 
+    /// Initializes the authentication stack without heap allocation.
+    ///
+    /// ```
+    /// use openrussh_client::auth::{AuthMethods, AuthMethod};
+    ///
+    /// let auth = AuthMethods::singleton(AuthMethod::None);
+    /// let mut it = auth.iter();
+    ///
+    /// assert!(it.next().is_some_and(|a| matches!(a, AuthMethod::None)));
+    /// assert!(it.next().is_none());
+    /// ```
     pub fn singleton(method: AuthMethod<'a>) -> Self {
         Self {
             inner: Either::Left(method),
         }
     }
+    /// Initializes the authentication stack without extra heap allocation.
+    ///
+    /// ```
+    /// use openrussh_client::auth::{AuthMethods, AuthLocalKind, AuthMethod};
+    ///
+    /// let v = vec![
+    ///     AuthMethod::None,
+    ///     AuthMethod::None,
+    ///     AuthMethod::Local {
+    ///         kind: AuthLocalKind::LocalPriv {
+    ///             priv_key: "id".as_ref(),
+    ///         },
+    ///     },
+    /// ];
+    /// let auth = AuthMethods::multiple(v);
+    /// let mut it = auth.iter();
+    ///
+    /// assert!(it.next().is_some_and(|a| matches!(a, AuthMethod::None)));
+    /// assert!(it.next().is_some_and(|a| matches!(a, AuthMethod::None)));
+    /// assert!(it.next().is_some_and(|a| matches!(a, AuthMethod::Local { .. })));
+    /// assert!(it.next().is_none());
+    /// ```
     pub fn multiple(methods: Vec<AuthMethod<'a>>) -> Self {
         Self {
             inner: Either::Right(methods),
         }
     }
 
+    /// Pushes the `method` to the last of the stack.
+    ///
+    /// ```
+    /// use openrussh_client::auth::{AuthMethods, AuthLocalKind, AuthMethod};
+    ///
+    /// let mut auth = AuthMethods::singleton(AuthMethod::None);
+    /// auth.push(AuthMethod::Local {
+    ///     kind: AuthLocalKind::LocalPriv {
+    ///         priv_key: "id".as_ref(),
+    ///     },
+    /// });
+    /// let mut it = auth.iter();
+    ///
+    /// assert!(it.next().is_some_and(|a| matches!(a, AuthMethod::None)));
+    /// assert!(it.next().is_some_and(|a| matches!(a, AuthMethod::Local { .. })));
+    /// assert!(it.next().is_none());
+    /// ```
     pub fn push(&mut self, method: AuthMethod<'a>) {
         match &mut self.inner {
             Either::Left(m) => {
@@ -884,6 +1112,11 @@ pub enum KeyType {
     Error,
 }
 
+/// Returns [`KeyType`] by checking the filename and the content.
+///
+/// If the extension of the filename is `.pub`, then returns `MaybePublic`.
+/// Otherwise it reads the first 40 bytes and checks the format.
+///
 /// It is intended to be sync (no [`tokio::fs`](tokio)).
 pub fn check_pub_or_priv(path: &Path) -> KeyType {
     fn check_impl(path: &Path) -> std::io::Result<KeyType> {
@@ -927,7 +1160,8 @@ pub fn check_pub_or_priv(path: &Path) -> KeyType {
 /// Performs authentication. It automatically calls [`Authenticator::load_agent()`] with the
 /// `agent` (if any) given by the `method`.
 ///
-/// It then invokes an individual authentication method on [`Authenticator`].
+/// It then invokes individual authentication methods on [`Authenticator`].
+/// Only one of them will be executed without any fallbacks.
 ///
 /// `Ok(AuthResult::Failure)` means "failed, but you can try the next pubkey authentication,"
 /// while `Err` suggests that you stop the authentication immediately.

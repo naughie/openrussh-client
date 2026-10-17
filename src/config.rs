@@ -143,7 +143,7 @@ pub struct Dest {
 /// Represents the authentication methods that the client will try.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Auth {
-    /// Corresponds to the `IdentityFile` directive.
+    /// Corresponds to the `IdentityFile` directive, trying in this order.
     pub identities: Option<Vec<PathBuf>>,
     /// Corresponds to the `CertificateFile` directive.
     pub cert: Option<PathBuf>,
@@ -197,8 +197,14 @@ pub struct Host {
 /// This is exactly what [`Chain::iter()`] does.
 ///
 /// ```
-/// # use openrussh_client::config::Chain;
 /// # use tokio::net::ToSocketAddrs;
+/// # use russh::client::Config;
+/// # use std::sync::Arc;
+/// # #[derive(Clone, Copy)]
+/// # struct MyHandler;
+/// # impl MyHandler {
+/// #     fn new() -> Self { Self }
+/// # }
 /// # struct Channel;
 /// # impl Channel {
 /// #     fn into_stream(self) {}
@@ -206,24 +212,59 @@ pub struct Host {
 /// # struct Handle;
 /// # impl Handle {
 /// #     async fn channel_open_direct_tcpip(&self, dh: &str, dp: u32, sh: &str, sp: u32) ->
-/// #     Result<Channel, ()> { Err(()) }
+/// #     Result<Channel, ()> { Ok(Channel) }
 /// # }
-/// # async fn connect(config: (), addrs: impl ToSocketAddrs, handler: ()) -> Result<Handle, ()> {
-/// #     Err(())
+/// # async fn connect(config: Arc<Config>, addrs: impl ToSocketAddrs, handler: MyHandler) -> Result<Handle, ()> {
+/// #     Ok(Handle)
 /// # }
-/// # async fn connect_stream(config: (), stream: (), handler: ()) -> Result<Handle, ()> {
-/// #     Err(())
+/// # async fn connect_stream(config: Arc<Config>, stream: (), handler: MyHandler) -> Result<Handle, ()> {
+/// #     Ok(Handle)
 /// # }
-/// # async fn dummy(chain: &Chain, config: (), handler: ()) {
+/// # async fn dummy() {
+/// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+/// use openrussh_client::config::Target;
+///
+/// use russh::client::Config;
+/// use std::io::BufReader;
+/// use std::sync::Arc;
+///
+/// let handler = MyHandler::new();
+/// let config = Arc::new(Config::default());
+///
+/// let ssh_config = r#"
+/// Host host1
+///   IdentityFile priv1
+/// Host host2
+///   IdentityFile priv2
+///   ProxyJump host1
+/// Host host3
+///   IdentityFile priv3
+///   ProxyJump host2
+/// "#;
+/// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+/// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+///
 /// // Case 1: one `target` only
+/// let target = Target::parse("host1");
+/// let chain = target.query(&ssh_config).unwrap();
 /// assert!(chain.bastions.is_none());
+///
 /// let (target, bastions) = chain.iter();
-/// let handle = connect(config, (target.dest.name.as_str(), target.dest.port), handler).await.unwrap();
+/// assert_eq!(target.dest.name, "host1");
+/// assert!(bastions.is_none());
+///
+/// let _handle = connect(config.clone(), (target.dest.name.as_str(), target.dest.port), handler).await.unwrap();
 ///
 /// // Case 2: one `target` and one or more `bastions`
+/// let target = Target::parse("host3");
+/// let chain = target.query(&ssh_config).unwrap();
 /// assert!(chain.bastions.as_ref().is_some_and(|v| !v.is_empty()));
+///
 /// let (first, bastions) = chain.iter();
-/// let bastions = bastions.unwrap();
+/// assert_eq!(first.dest.name, "host1");
+/// assert!(bastions.is_some());
+///
+/// let mut bastions = bastions.unwrap();
 ///
 /// let mut handle = connect(
 ///     config.clone(),
@@ -231,34 +272,99 @@ pub struct Host {
 ///     handler,
 /// ).await.unwrap();
 ///
-/// for bastion in bastions {
-///     let channel = handle
-///         .channel_open_direct_tcpip(
-///             &bastion.to.dest.name,
-///             bastion.to.dest.port as u32,
-///             "127.0.0.1",
-///             0,
-///         )
-///         .await
-///         .unwrap();
-///     handle = connect_stream(
-///         config.clone(),
-///         channel.into_stream(),
-///         handler
+/// let bastion0 = bastions.next().unwrap();
+/// assert_eq!(bastion0.from.dest.name, "host1");
+/// assert_eq!(bastion0.to.dest.name, "host2");
+///
+/// let channel = handle
+///     .channel_open_direct_tcpip(
+///         &bastion0.to.dest.name,
+///         bastion0.to.dest.port as u32,
+///         "127.0.0.1",
+///         0,
 ///     )
-///         .await
-///         .unwrap();
-/// }
+///     .await
+///     .unwrap();
+/// handle = connect_stream(
+///     config.clone(),
+///     channel.into_stream(),
+///     handler
+/// )
+///     .await
+///     .unwrap();
+///
+/// let bastion1 = bastions.next().unwrap();
+/// assert_eq!(bastion1.from.dest.name, "host2");
+/// assert_eq!(bastion1.to.dest.name, "host3");
+///
+/// let channel = handle
+///     .channel_open_direct_tcpip(
+///         &bastion1.to.dest.name,
+///         bastion1.to.dest.port as u32,
+///         "127.0.0.1",
+///         0,
+///     )
+///     .await
+///     .unwrap();
+/// handle = connect_stream(
+///     config.clone(),
+///     channel.into_stream(),
+///     handler
+/// )
+///     .await
+///     .unwrap();
+///
+/// assert!(bastions.next().is_none());
 /// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct Chain {
+    /// The final target server.
     pub target: Host,
+    /// Intermediate servers, specified by `ProxyJump`s.
     pub bastions: Option<Box<[Host]>>,
 }
 
 impl Chain {
     /// Queries and resolves the OpenSSH config. Read [`Target::query()`] for more information.
+    ///
+    /// ```
+    /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+    /// use openrussh_client::config::Target;
+    /// use std::io::BufReader;
+    ///
+    /// let ssh_config = r#"
+    /// Host host1
+    /// Host host2
+    ///   ProxyJump host1
+    /// Host host3
+    ///   ProxyJump host2
+    /// "#;
+    /// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+    /// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+    ///
+    /// let target = Target::parse("host1");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// assert_eq!(chain.target.dest.name, "host1");
+    /// assert!(chain.bastions.is_none());
+    ///
+    /// let target = Target::parse("host2");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// assert_eq!(chain.target.dest.name, "host2");
+    /// assert!(chain.bastions.is_some_and(|v| {
+    ///     v.len() == 1
+    ///         && v[0].dest.name == "host1"
+    /// }));
+    ///
+    /// let target = Target::parse("host3");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// assert_eq!(chain.target.dest.name, "host3");
+    /// assert!(chain.bastions.is_some_and(|v| {
+    ///     v.len() == 2
+    ///         && v[0].dest.name == "host2"
+    ///         && v[1].dest.name == "host1"
+    /// }));
+    /// ```
     pub fn new(target: Target<'_>, conf: &OpenSshConfig) -> Result<Self, Error> {
         resolve_config(target, conf)
     }
@@ -282,6 +388,42 @@ impl Chain {
     ///
     /// If `bastion_chain` is `Some`, then it is guaranteed that the length of the contained
     /// iterator is longer than zero, and actually equal to `self.bastions.len()`.
+    ///
+    /// ```
+    /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+    /// use openrussh_client::config::Target;
+    /// use std::io::BufReader;
+    ///
+    /// let ssh_config = r#"
+    /// Host host1
+    /// Host host2
+    ///   ProxyJump host1
+    /// Host host3
+    ///   ProxyJump host2
+    /// "#;
+    /// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+    /// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+    ///
+    /// let target = Target::parse("host1");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// let (_, bastion_chain) = chain.iter();
+    /// assert!(bastion_chain.is_none());
+    /// assert!(chain.bastions.is_none());
+    ///
+    /// let target = Target::parse("host2");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// let (_, bastion_chain) = chain.iter();
+    /// let count = bastion_chain.map(|c| c.count()).unwrap_or_default();
+    /// assert_eq!(count, 1);
+    /// assert!(chain.bastions.is_some_and(|v| v.len() == count));
+    ///
+    /// let target = Target::parse("host3");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// let (_, bastion_chain) = chain.iter();
+    /// let count = bastion_chain.map(|c| c.count()).unwrap_or_default();
+    /// assert_eq!(count, 2);
+    /// assert!(chain.bastions.is_some_and(|v| v.len() == count));
+    /// ```
     ///
     /// Also it is guaranteed that:
     ///
@@ -310,6 +452,33 @@ impl Chain {
     ///
     /// assert!(bastion_chain.next().is_none());
     /// # }
+    /// # use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+    /// # use openrussh_client::config::Target;
+    /// # use std::io::BufReader;
+    /// # use std::ptr;
+    /// # let ssh_config = r#"
+    /// # Host host1
+    /// # Host host2
+    /// #   ProxyJump host1
+    /// # Host host3
+    /// #   ProxyJump host2
+    /// # Host host4
+    /// #   ProxyJump host3
+    /// # "#;
+    /// # let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+    /// # ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+    /// # let target = Target::parse("host4");
+    /// # let chain = target.query(&ssh_config).unwrap();
+    /// # let (first, bastion_chain) = chain.iter();
+    /// # let mut bastion_chain = bastion_chain.unwrap();
+    /// # let item_0 = bastion_chain.next().unwrap();
+    /// # assert!(ptr::eq(item_0.from, first));
+    /// # let item_1 = bastion_chain.next().unwrap();
+    /// # assert!(ptr::eq(item_1.from, item_0.to));
+    /// # let item_2 = bastion_chain.next().unwrap();
+    /// # assert!(ptr::eq(item_2.from, item_1.to));
+    /// # assert!(ptr::eq(item_2.to, &chain.target));
+    /// # assert!(bastion_chain.next().is_none());
     /// ```
     pub fn iter(&self) -> (&Host, Option<BastionIter<'_>>) {
         if let Some(bastions) = &self.bastions
