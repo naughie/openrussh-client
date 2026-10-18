@@ -1,5 +1,10 @@
 # OpenRussh Client
 
+[![crates.io](https://img.shields.io/crates/v/openrussh-client.svg)](https://crates.io/crates/openrussh-client)
+[![docs.rs](https://docs.rs/openrussh-client/badge.svg)](https://docs.rs/openrussh-client)
+[![Tests](https://github.com/naughie/openrussh-client/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/naughie/openrussh-client/actions/workflows/test.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/openrussh-client.svg)](https://crates.io/crates/openrussh-client)
+
 OpenRussh client is an implementation of a SSH client using the [Russh](https://crates.io/crates/russh) crate.
 
 It reads OpenSSH's `~/.ssh/config` and `~/.ssh/known_hosts`, hence "OpenRussh".
