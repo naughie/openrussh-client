@@ -1,13 +1,10 @@
 #!/bin/sh
 set -eu
 
-groupadd -g 1002 alice
-useradd --create-home --shell /bin/sh alice -u 1002 -g 1002
+bobs="1 2 3"
 
-install -d -m 0700 -o alice -g alice /home/alice/.ssh
-rm -f /etc/ssh/ssh_host_*
-mkdir -p /run/sshd
-for i in 1 2 3; do
+: > /home/alice/.ssh/known_hosts
+for i in $bobs; do
     user=bob$i
     port=222$i
     identity=id_ed25519_bob$i
@@ -27,45 +24,29 @@ for i in 1 2 3; do
         printf '[127.0.0.1]:%s ' "$port"
         cat "/etc/ssh/ssh_host_${user}_key.pub"
     } >> /home/alice/.ssh/known_hosts
-    {
-        printf '%s\n' \
-            'ListenAddress 127.0.0.1' \
-            "Port $port" \
-            "HostKey /etc/ssh/ssh_host_${user}_key" \
-            "PidFile /run/sshd/${user}.pid" \
-            "AllowUsers $user" \
-            'PubkeyAuthentication yes' \
-            'AuthenticationMethods publickey' \
-            'AuthorizedKeysFile .ssh/authorized_keys' \
-            'PasswordAuthentication no' \
-            'KbdInteractiveAuthentication no' \
-            'PermitEmptyPasswords no' \
-            'PermitRootLogin no' \
-            'PerSourcePenalties no' \
-            'UsePAM no' \
-            'AllowAgentForwarding no' \
-            'AllowStreamLocalForwarding no' \
-            "AllowTcpForwarding $forwarding" \
-            'PermitOpen 127.0.0.1:2221 127.0.0.1:2222 127.0.0.1:2223 127.0.0.1:2224'
-    } > "/etc/ssh/sshd_config_${user}"
+    sed \
+        -e "s/^AllowUsers .*/AllowUsers $user/" \
+        -e "s|^HostKey .*|HostKey /etc/ssh/ssh_host_${user}_key|" \
+        -e "s/^Port .*/Port $port/" \
+        /etc/ssh/sshd_config > "/etc/ssh/sshd_config_${user}"
+    printf '%s\n' \
+        "AllowTcpForwarding $forwarding" \
+        'PermitOpen 127.0.0.1:2221 127.0.0.1:2222 127.0.0.1:2223 127.0.0.1:2224' \
+        "PidFile /run/sshd/${user}.pid" \
+        >> "/etc/ssh/sshd_config_${user}"
 done
 ssh-keygen -H -f /home/alice/.ssh/known_hosts
 rm -f /home/alice/.ssh/known_hosts.old
 chmod 0600 /home/alice/.ssh/known_hosts
 chown -R alice:alice /home/alice/.ssh
 
-printf '%s\n' \
-       'Host *' \
-       '    HostName 127.0.0.1' \
-       'Host bob1*' \
-       '    Port 2221' \
-       '    User bob1' \
-       'Host bob2*' \
-       '    Port 2222' \
-       '    User bob2' \
-       'Host bob3*' \
-       '    Port 2223' \
-       '    User bob3' \
-       > /home/alice/.ssh/config
-chmod 0600 /home/alice/.ssh/config
-chown alice:alice /home/alice/.ssh/config
+config="$(cat /home/alice/.ssh/config)"
+{
+    for i in $bobs; do
+        printf '%s\n' \
+            "Host bob$i*" \
+            "    Port 222$i" \
+            "    User bob$i"
+    done
+    printf '%s\n' "$config"
+} > /home/alice/.ssh/config

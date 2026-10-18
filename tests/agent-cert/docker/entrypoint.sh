@@ -1,7 +1,6 @@
 #!/bin/sh
 set -eu
 
-/usr/sbin/sshd -t
 /usr/sbin/sshd -e
 
 export MY_AGENT_SOCK=/home/alice/.ssh/agent.sock
