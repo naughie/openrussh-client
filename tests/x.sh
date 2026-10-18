@@ -3,6 +3,8 @@
 set -e
 
 __proj_id="openrussh-client"
+__openssh_version="1:10.0p1-7+deb13u4"
+__apt_snapshot="20261005T000000Z"
 
 __print_usage() {
     printf 'Usage: %s [test_id] [build|run]\n' "${__script}" >&2
@@ -20,7 +22,10 @@ __find_root_dir() {
 }
 
 __build_image() {
-    docker build -t "${__docker_image}" -f "${__dockerfile}" "${__docker_ctx}"
+    docker build \
+        --build-arg "OPENSSH_VERSION=${__openssh_version}" \
+        --build-arg "APT_SNAPSHOT=${__apt_snapshot}" \
+        -t "${__docker_image}" -f "${__dockerfile}" "${__docker_ctx}"
 }
 
 __run_image() {
@@ -33,9 +38,10 @@ __run_image() {
 
 __x() {
     if [ -f "${__dockerfile}" ]; then
+        printf "test %s\n" "${__dockerfile}"
+
         if [ -z "${__cmd}" ]; then
-            __build_image
-            __run_image
+            __build_image && __run_image
         else
             case "${__cmd}" in
                 build)
@@ -113,16 +119,44 @@ fi
     else
         find "${__repo_root}/tests"/* -prune -type d ! -name "target"
     fi
-} | while IFS= read -r __dir; do
-    __dockerfile="${__dir}/docker/Dockerfile"
-    __docker_image="${__proj_id}/${__dir#"${__repo_root}"/}"
-    __docker_ctx="${__repo_root}"
+} | {
+    __num_suites=0
+    __failed_suites=0
+    __failure_msg=""
 
-    set +e
-    if [ "${__tty}" = true ]; then
-        __x </dev/tty >/dev/tty 2>&1
-    else
-        __x
+    while IFS= read -r __dir; do
+        __dockerfile="${__dir}/docker/Dockerfile"
+        __docker_image="${__proj_id}/${__dir#"${__repo_root}"/}"
+        __docker_ctx="${__repo_root}"
+
+        set +e
+
+        if [ -f "${__dockerfile}" ]; then
+            __num_suites=$((__num_suites + 1))
+        fi
+
+        if [ "${__tty}" = true ]; then
+            __x </dev/tty >/dev/tty 2>&1
+        else
+            __x
+        fi
+        __status=$?
+
+        set -e
+
+        if [ "${__status}" -ne 0 ]; then
+            __failed_suites=$((__failed_suites + 1))
+            __failure_msg="${__failure_msg}  ${__dir##*/} (exit ${__status})"
+        fi
+    done
+
+    printf '\nSummary: %s total, %s passed, %s failed\n' \
+        "${__num_suites}" "$((__num_suites - __failed_suites))" "${__failed_suites}" >&2
+
+    if [ "${__failed_suites}" -ne 0 ]; then
+        printf 'Failed suites:\n%s\n' "${__failure_msg}" >&2
     fi
+
     set -e
-done
+    [ "${__failed_suites}" -eq 0 ]
+}

@@ -26,12 +26,13 @@ ENV MY_AGENT_SOCK=/home/alice/.ssh/agent.sock \
     EXPIRED_AGENT_SOCK=/home/alice/.ssh/dummy/expired-agent.sock \
     UNTRUSTED_AGENT_SOCK=/home/alice/.ssh/dummy/untrusted-agent.sock
 
-ARG OPENSSH_VERSION=1:10.0p1-7+deb13u4
+ARG OPENSSH_VERSION
+ARG APT_SNAPSHOT
 
 RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
     && printf '%s\n' \
-       'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20261005T000000Z/ trixie main' \
-       'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20261005T000000Z/ trixie-security main' \
+       "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${APT_SNAPSHOT}/ trixie main" \
+       "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${APT_SNAPSHOT}/ trixie-security main" \
        > /etc/apt/sources.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
