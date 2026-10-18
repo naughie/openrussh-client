@@ -16,6 +16,7 @@ use ssh_key::{Algorithm, HashAlg};
 use ssh_key::{Certificate, Fingerprint, PublicKey};
 
 use std::io::Error as IoError;
+use std::iter::FusedIterator;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -42,7 +43,8 @@ fn digest(key: &KeyData) -> Digest {
 }
 
 pub struct KnownHostsHandler {
-    entries: Arc<[PreparedEntry]>,
+    trusted: Option<Arc<[PreparedEntry]>>,
+    revoked: Option<Arc<[PreparedEntry]>>,
     host: String,
     port: u16,
 }
@@ -129,7 +131,8 @@ impl KnownHostsHandler {
             .to_ascii_lowercase();
 
         Self {
-            entries: Arc::clone(&known_hosts.entries),
+            trusted: known_hosts.trusted.clone(),
+            revoked: known_hosts.revoked.clone(),
             host,
             port,
         }
@@ -144,27 +147,44 @@ impl KnownHostsHandler {
         host_matched_known_hosts(&self.host, port_str, hosts)
     }
 
-    fn contains(&self, lookup: LookupKey) -> bool {
-        let start = self.entries.partition_point(|entry| entry.lookup < lookup);
+    fn contains_entry(&self, entries: &[PreparedEntry], lookup: LookupKey) -> bool {
+        let start = entries.partition_point(|entry| entry.lookup < lookup);
 
-        self.entries[start..]
+        entries[start..]
             .iter()
             .take_while(|entry| entry.lookup == lookup)
             .any(|entry| self.host_matched(&entry.hosts))
     }
 
+    fn is_trusted(&self, lookup: LookupKey) -> bool {
+        self.trusted
+            .as_ref()
+            .is_some_and(|entries| self.contains_entry(entries, lookup))
+    }
+
+    fn is_revoked(&self, lookup: LookupKey) -> bool {
+        self.revoked
+            .as_ref()
+            .is_some_and(|entries| self.contains_entry(entries, lookup))
+    }
+
     fn has_pubkeys(&self) -> bool {
-        self.entries.iter().any(|entry| {
-            matches!(entry.lookup, LookupKey::Pubkey(..)) && self.host_matched(&entry.hosts)
+        self.trusted.as_ref().is_some_and(|trusted| {
+            trusted.iter().any(|entry| {
+                matches!(entry.lookup, LookupKey::Pubkey(..)) && self.host_matched(&entry.hosts)
+            })
         })
     }
 
     pub fn check_public_key(&self, pubkey: &PublicKey) -> MatchResult {
-        self.check_public_key_impl(pubkey.key_data(), SigAlg::from(&pubkey.algorithm()))
+        self.check_public_key_impl(digest(pubkey.key_data()), SigAlg::from(&pubkey.algorithm()))
     }
 
-    fn check_public_key_impl(&self, pubkey: &KeyData, alg: SigAlg) -> MatchResult {
-        if alg != SigAlg::Other && self.contains(LookupKey::Pubkey(alg, digest(pubkey))) {
+    fn check_public_key_impl(&self, pubkey: Digest, alg: SigAlg) -> MatchResult {
+        let lookup = LookupKey::Pubkey(alg, pubkey);
+        if self.is_revoked(lookup) {
+            MatchResult::Revoked
+        } else if alg != SigAlg::Other && self.is_trusted(lookup) {
             MatchResult::Found
         } else if self.has_pubkeys() {
             MatchResult::KeyMismatch
@@ -186,15 +206,29 @@ impl KnownHostsHandler {
             return MatchResult::PrincipalMismatch;
         }
 
-        let ca = digest(cert.signature_key());
-        let trusted = self.contains(LookupKey::Ca(ca));
+        let signature_key = cert.signature_key();
+        let public_key = cert.public_key();
+
+        let sig_digest = digest(signature_key);
+        let pub_alg = SigAlg::from(&public_key.algorithm());
+        let pub_digest = digest(public_key);
+
+        if self.is_revoked(LookupKey::Pubkey(
+            SigAlg::from(&signature_key.algorithm()),
+            sig_digest,
+        )) || self.is_revoked(LookupKey::Pubkey(pub_alg, pub_digest))
+        {
+            return MatchResult::Revoked;
+        }
+
+        let trusted = self.is_trusted(LookupKey::Ca(sig_digest));
 
         if trusted {
-            let ca = Fingerprint::Sha256(ca);
+            let ca = Fingerprint::Sha256(sig_digest);
             if trusted && cert.validate([&ca]).is_ok() {
                 MatchResult::Found
             } else {
-                self.check_public_key_impl(cert.public_key(), SigAlg::from(&cert.algorithm()))
+                self.check_public_key_impl(pub_digest, SigAlg::from(&cert.algorithm()))
             }
         } else {
             MatchResult::CertNotVerified
@@ -227,7 +261,7 @@ impl KnownHostsHandler {
 
         PreferredPublicKeyAlgIter {
             known_mask: known,
-            known_it: self.entries.iter(),
+            known_it: TrustedIter::from(&self.trusted),
             prev: SigAlg::Other,
             preferred: config.key.iter(),
         }
@@ -237,7 +271,7 @@ impl KnownHostsHandler {
         let mut known = 0;
 
         // Match only until each algorithm is found for this host.
-        for entry in self.entries.iter() {
+        for entry in TrustedIter::from(&self.trusted) {
             let LookupKey::Pubkey(alg, _) = entry.lookup else {
                 break;
             };
@@ -255,9 +289,31 @@ impl KnownHostsHandler {
     }
 }
 
+struct TrustedIter<'k> {
+    inner: Option<std::slice::Iter<'k, PreparedEntry>>,
+}
+
+impl<'k> TrustedIter<'k> {
+    fn from(trusted: &'k Option<Arc<[PreparedEntry]>>) -> Self {
+        Self {
+            inner: trusted.as_ref().map(|entries| entries.iter()),
+        }
+    }
+}
+
+impl<'k> Iterator for TrustedIter<'k> {
+    type Item = &'k PreparedEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let inner = self.inner.as_mut()?;
+        inner.next()
+    }
+}
+impl FusedIterator for TrustedIter<'_> {}
+
 pub struct PreferredPublicKeyAlgIter<'k, 'c> {
     known_mask: u8,
-    known_it: std::slice::Iter<'k, PreparedEntry>,
+    known_it: TrustedIter<'k>,
     prev: SigAlg,
     preferred: std::slice::Iter<'c, Algorithm>,
 }
@@ -302,6 +358,7 @@ impl Iterator for PreferredPublicKeyAlgIter<'_, '_> {
         None
     }
 }
+impl FusedIterator for PreferredPublicKeyAlgIter<'_, '_> {}
 
 impl Handler for KnownHostsHandler {
     type Error = russh::Error;
@@ -413,7 +470,8 @@ impl Handler for KnownHostsHandler {
 
 #[derive(Debug, Clone)]
 pub struct KnownHosts {
-    entries: Arc<[PreparedEntry]>,
+    trusted: Option<Arc<[PreparedEntry]>>,
+    revoked: Option<Arc<[PreparedEntry]>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -424,6 +482,9 @@ pub enum MatchResult {
     NotFound,
     /// The requested host is found in `~/.known_hosts`, but given the wrong public key.
     KeyMismatch,
+    /// The public key, certified public key, or certificate signing key is revoked
+    /// for the requested host.
+    Revoked,
     /// The certificate does not match the requested host.
     PrincipalMismatch,
     /// Failed to recognize the critical options in the certificate.
@@ -451,37 +512,64 @@ impl MatchResult {
 
 impl KnownHosts {
     pub fn new(known_hosts: ssh_key::KnownHosts) -> Self {
+        use ssh_key::known_hosts::Entry;
+
+        fn revoked_lookup(entry: &Entry) -> LookupKey {
+            let pubkey = entry.public_key();
+            LookupKey::Pubkey(SigAlg::from(&pubkey.algorithm()), digest(pubkey.key_data()))
+        }
+        fn cert_authority_lookup(entry: &Entry) -> LookupKey {
+            LookupKey::Ca(digest(entry.public_key().key_data()))
+        }
+        fn pubkey_lookup(entry: &Entry) -> Option<LookupKey> {
+            let pubkey = entry.public_key();
+            let alg = SigAlg::from(&pubkey.algorithm());
+
+            (alg != SigAlg::Other).then(|| LookupKey::Pubkey(alg, digest(pubkey.key_data())))
+        }
+
         use ssh_key::known_hosts::Marker;
 
-        let mut entries = known_hosts
-            .into_iter()
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
+        let known_hosts = known_hosts.into_iter().filter_map(|entry| entry.ok());
 
-                let lookup = match entry.marker() {
-                    Some(&Marker::Revoked) => None,
-                    Some(&Marker::CertAuthority) => {
-                        Some(LookupKey::Ca(digest(entry.public_key().key_data())))
+        let mut revoked: Option<Vec<PreparedEntry>> = None;
+        let mut trusted: Option<Vec<PreparedEntry>> = None;
+
+        for entry in known_hosts {
+            match entry.marker() {
+                Some(&Marker::Revoked) => {
+                    revoked.get_or_insert_default().push(PreparedEntry {
+                        lookup: revoked_lookup(&entry),
+                        hosts: entry.into(),
+                    });
+                }
+                Some(&Marker::CertAuthority) => {
+                    trusted.get_or_insert_default().push(PreparedEntry {
+                        lookup: cert_authority_lookup(&entry),
+                        hosts: entry.into(),
+                    });
+                }
+                None => {
+                    if let Some(lookup) = pubkey_lookup(&entry) {
+                        trusted.get_or_insert_default().push(PreparedEntry {
+                            lookup,
+                            hosts: entry.into(),
+                        });
                     }
-                    None => {
-                        let pubkey = entry.public_key();
-                        let alg = SigAlg::from(&pubkey.algorithm());
-                        (alg != SigAlg::Other)
-                            .then(|| LookupKey::Pubkey(alg, digest(pubkey.key_data())))
-                    }
-                };
+                }
+            }
+        }
 
-                lookup.map(|lookup| PreparedEntry {
-                    lookup,
-                    hosts: entry.into(),
-                })
-            })
-            .collect::<Vec<_>>();
-
-        entries.sort_unstable_by_key(|entry| entry.lookup);
+        if let Some(entries) = &mut trusted {
+            entries.sort_unstable_by_key(|entry| entry.lookup);
+        }
+        if let Some(entries) = &mut revoked {
+            entries.sort_unstable_by_key(|entry| entry.lookup);
+        }
 
         Self {
-            entries: entries.into(),
+            trusted: trusted.map(Into::into),
+            revoked: revoked.map(Into::into),
         }
     }
 
@@ -730,6 +818,69 @@ mod tests {
         }
 
         KnownHosts::parse(&s)
+    }
+
+    #[test]
+    fn revoked_public_key() {
+        let public_key = rand_public_key();
+        let key = public_key.to_openssh().unwrap();
+        let other_key = rand_public_key().to_openssh().unwrap();
+        let trusted = format!("test.com {key}");
+
+        for (host, revoked_key, expected) in [
+            ("test.com", &key, MatchResult::Revoked),
+            ("other.test.com", &key, MatchResult::Found),
+            ("[test.com]:2222", &key, MatchResult::Found),
+            ("test.com", &other_key, MatchResult::Found),
+        ] {
+            let revoked = format!("@revoked {host} {revoked_key}");
+
+            let entries = [trusted.as_str(), revoked.as_str()];
+            let known_hosts = make_known_hosts(entries);
+            let handler = known_hosts.clone().handler("test.com", 22);
+            assert_eq!(
+                handler.check_public_key(&public_key),
+                expected,
+                "unexpected result for entries {entries:?}",
+            );
+            assert_eq!(
+                handler.check_public_key(&public_key).is_found(),
+                expected == MatchResult::Found,
+            );
+
+            let entries = [revoked.as_str(), trusted.as_str()];
+            let known_hosts = make_known_hosts(entries);
+            let handler = known_hosts.clone().handler("test.com", 22);
+            assert_eq!(
+                handler.check_public_key(&public_key),
+                expected,
+                "unexpected result for entries {entries:?}",
+            );
+            assert_eq!(
+                handler
+                    .check_server_key(&PublicKeyOrCertificate::PublicKey {
+                        key: public_key.clone(),
+                        hash_alg: None,
+                    })
+                    .is_found(),
+                expected == MatchResult::Found,
+            );
+        }
+
+        let known_hosts = KnownHosts::parse(&format!("@revoked test.com {key}"));
+        assert_eq!(
+            known_hosts
+                .handler("test.com", 22)
+                .check_public_key(&public_key),
+            MatchResult::Revoked,
+        );
+        assert!(
+            known_hosts
+                .handler("test.com", 22)
+                .preferred_public_key_alg(&Preferred::default())
+                .is_none()
+        );
+        assert!(KnownHosts::parse(&trusted).revoked.is_none());
     }
 
     #[test]
