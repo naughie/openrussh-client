@@ -24,14 +24,15 @@ We do *recognize* OpenSSH but do not *behave* as OpenSSH. That does not mean you
 
 Supported directives:
 
-- `Host`
-- `Port`
-- `User`
-- `ProxyJump`
-- `IdentityFile`
-- `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
 - `CertificateFile`
+- `Host`
+- `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
+- `IdentityFile`
 - `IdentitiesOnly`
+- `RequestTTY`
+- `Port`
+- `ProxyJump`
+- `User`
 
 
 ## SSH Features
@@ -44,7 +45,6 @@ Plan to support:
 - Local socket forwarding (OpenSSH's `-L` option)
 - Remote port forwarding (OpenSSH's `-R` option)
 - Remote socket forwarding (OpenSSH's `-R` option)
-- PTY
 - Limited support for FIDO2
 
 

@@ -22,21 +22,22 @@
 //! You can configure our SSH client by `~/.ssh/config`.
 //! It leverages the [`ssh2-config`](ssh2_config) crate for parsing and querying the config file,
 //! but we need some [`ignored_fields`](ssh2_config::HostParams::ignored_fields) for controling the
-//! behavior of authentication methods.
+//! behavior of authentication methods and PTY.
 //! One of the most important implication is that the `ssh2_config` crate itself may add the new
 //! fields for those directives, removing them from the `ignored_fields` mapping, hence breaking our
 //! code at runtime with the minor version updates.
 //!
 //! Supported directives:
 //!
-//! - `Host`
-//! - `Port`
-//! - `User`
-//! - `ProxyJump`
-//! - `IdentityFile`
-//! - `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
 //! - `CertificateFile`
+//! - `Host`
+//! - `IdentityAgent` (or `${SSH_AUTH_SOCK}`)
+//! - `IdentityFile`
 //! - `IdentitiesOnly`
+//! - `RequestTTY`
+//! - `Port`
+//! - `ProxyJump`
+//! - `User`
 //!
 //!
 //! # Known Hosts
