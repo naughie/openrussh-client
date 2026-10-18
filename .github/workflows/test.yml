@@ -1,0 +1,59 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  cargo:
+    name: Cargo tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Show Rust version
+        run: cargo +stable --version --verbose
+
+      - name: Run root tests
+        run: cargo +stable test --all-features
+
+  docker:
+    name: Docker integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    env:
+      DOCKER_BUILDKIT: "1"
+      BUILDKIT_PROGRESS: plain
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check Docker
+        run: docker info
+
+      - name: Run all Docker integration tests
+        run: sh tests/x.sh
