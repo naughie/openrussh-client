@@ -4,6 +4,10 @@ set -eu
 /usr/sbin/sshd -t
 /usr/sbin/sshd -e
 
+export MY_AGENT_SOCK=/home/alice/.ssh/agent.sock
+export EXPIRED_AGENT_SOCK=/home/alice/.ssh/dummy/expired-agent.sock
+export UNTRUSTED_AGENT_SOCK=/home/alice/.ssh/dummy/untrusted-agent.sock
+
 exec runuser -u alice -- /bin/sh -eu -c '
     _agent_pids=""
     for _kind in valid expired untrusted; do

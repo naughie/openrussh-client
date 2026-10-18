@@ -4,6 +4,8 @@ set -eu
 /usr/sbin/sshd -t
 /usr/sbin/sshd -e
 
+export MY_AGENT_SOCK=/home/alice/.ssh/agent.sock
+
 exec runuser -u alice -- ssh-agent -a "$MY_AGENT_SOCK" /bin/sh -eu -c '
     mkdir -p "$HOME/.ssh/dummy"
     chmod 0700 "$HOME/.ssh/dummy"
