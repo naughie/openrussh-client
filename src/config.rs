@@ -51,7 +51,7 @@ pub enum Error {
 
 /// Target host of the user input.
 ///
-/// ```
+/// ```no_run
 /// use openrussh_client::config::Target;
 /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
 ///

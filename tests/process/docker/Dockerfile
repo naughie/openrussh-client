@@ -83,6 +83,7 @@ RUN rm -f /etc/ssh/ssh_host_* \
        'KbdInteractiveAuthentication no' \
        'PermitEmptyPasswords no' \
        'PermitRootLogin no' \
+       'PerSourcePenalties no' \
        'UsePAM no' \
        'AllowTcpForwarding yes' \
        'AllowStreamLocalForwarding yes' \

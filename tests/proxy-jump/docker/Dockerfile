@@ -77,6 +77,7 @@ RUN set -eu; \
                 'KbdInteractiveAuthentication no' \
                 'PermitEmptyPasswords no' \
                 'PermitRootLogin no' \
+                'PerSourcePenalties no' \
                 'UsePAM no' \
                 'AllowAgentForwarding no' \
                 'AllowStreamLocalForwarding no' \
