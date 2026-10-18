@@ -1,3 +1,5 @@
+//! Utilities to read, parse, and check against a OpenSSH `known_hosts`.
+
 use crate::connect::{Context, MakeHandler};
 
 use russh::client::{ChannelOpenHandle, Handler, Msg, Session};
@@ -8,18 +10,41 @@ use russh::Preferred;
 use russh::keys::ssh_key;
 
 pub use ssh_key::known_hosts as openssh_known_hosts;
-use ssh_key::known_hosts::{Entry, HostPatterns, Marker};
+use ssh_key::known_hosts::HostPatterns;
 use ssh_key::public::KeyData;
 use ssh_key::{Algorithm, HashAlg};
 use ssh_key::{Certificate, Fingerprint, PublicKey};
 
 use std::io::Error as IoError;
 use std::path::Path;
+use std::sync::Arc;
+
+type Digest = [u8; 32];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LookupKey {
+    Pubkey(SigAlg, Digest),
+    Ca(Digest),
+}
+
+#[derive(Debug)]
+struct PreparedEntry {
+    lookup: LookupKey,
+    hosts: HostPatterns,
+}
+
+fn digest(key: &KeyData) -> Digest {
+    if let Fingerprint::Sha256(data) = Fingerprint::new(HashAlg::Sha256, key) {
+        data
+    } else {
+        unreachable!()
+    }
+}
 
 pub struct KnownHostsHandler {
-    /// Guaranteed not to contain `PubkeySigAlg::Other`.
-    pubkeys: Option<Vec<(SigAlg, Fingerprint)>>,
-    cas: Option<(Vec<Fingerprint>, String)>,
+    entries: Arc<[PreparedEntry]>,
+    host: String,
+    port: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -36,6 +61,12 @@ enum SigAlg {
 }
 
 impl SigAlg {
+    const fn mask(self) -> u8 {
+        let shift = self as u8;
+        debug_assert!(shift < 8, "SigAlg has too many variants");
+        1 << shift
+    }
+
     fn from(alg: &Algorithm) -> Self {
         use ssh_key::EcdsaCurve;
 
@@ -89,18 +120,6 @@ impl SigAlg {
 
 impl KnownHostsHandler {
     pub fn new(known_hosts: &KnownHosts, host: &str, port: u16) -> Self {
-        fn collect<T>(it: impl Iterator<Item = T>) -> Option<Vec<T>> {
-            let mut ret: Option<Vec<T>> = None;
-
-            for item in it {
-                ret.get_or_insert_default().push(item);
-            }
-
-            ret
-        }
-
-        use core::fmt::NumBuffer;
-
         let host = host.trim_start_matches('[');
         let host = host
             .find("]:")
@@ -109,36 +128,35 @@ impl KnownHostsHandler {
             .trim_end_matches(']')
             .to_ascii_lowercase();
 
-        let mut buf = (port != 22).then(NumBuffer::new);
-        let port_str = buf.as_mut().map(|buf| port.format_into(buf));
-
-        let mut pubkeys = collect(known_hosts.public_keys.iter().filter_map(|entry| {
-            if host_matched_known_hosts(&host, port_str, entry.host_patterns()) {
-                let pubkey = entry.public_key();
-                let alg = SigAlg::from(&pubkey.algorithm());
-
-                (alg != SigAlg::Other)
-                    .then(|| (alg, Fingerprint::new(HashAlg::Sha256, pubkey.key_data())))
-            } else {
-                None
-            }
-        }));
-        if let Some(pubkeys) = &mut pubkeys {
-            pubkeys.sort_unstable();
+        Self {
+            entries: Arc::clone(&known_hosts.entries),
+            host,
+            port,
         }
+    }
 
-        let cas = collect(known_hosts.cas.iter().filter_map(|entry| {
-            if host_matched_known_hosts(&host, port_str, entry.host_patterns()) {
-                let pubkey = entry.public_key();
+    fn host_matched(&self, hosts: &HostPatterns) -> bool {
+        use core::fmt::NumBuffer;
 
-                Some(Fingerprint::new(HashAlg::Sha256, pubkey.key_data()))
-            } else {
-                None
-            }
-        }));
-        let cas = cas.map(|cas| (cas, host));
+        let mut buf = (self.port != 22).then(NumBuffer::new);
+        let port_str = buf.as_mut().map(|buf| self.port.format_into(buf));
 
-        Self { pubkeys, cas }
+        host_matched_known_hosts(&self.host, port_str, hosts)
+    }
+
+    fn contains(&self, lookup: LookupKey) -> bool {
+        let start = self.entries.partition_point(|entry| entry.lookup < lookup);
+
+        self.entries[start..]
+            .iter()
+            .take_while(|entry| entry.lookup == lookup)
+            .any(|entry| self.host_matched(&entry.hosts))
+    }
+
+    fn has_pubkeys(&self) -> bool {
+        self.entries.iter().any(|entry| {
+            matches!(entry.lookup, LookupKey::Pubkey(..)) && self.host_matched(&entry.hosts)
+        })
     }
 
     pub fn check_public_key(&self, pubkey: &PublicKey) -> MatchResult {
@@ -146,34 +164,34 @@ impl KnownHostsHandler {
     }
 
     fn check_public_key_impl(&self, pubkey: &KeyData, alg: SigAlg) -> MatchResult {
-        if let Some(pubkeys) = &self.pubkeys {
-            let fp = Fingerprint::new(HashAlg::Sha256, pubkey);
-            if pubkeys.binary_search(&(alg, fp)).is_ok() {
-                MatchResult::Found
-            } else {
-                MatchResult::KeyMismatch
-            }
+        if alg != SigAlg::Other && self.contains(LookupKey::Pubkey(alg, digest(pubkey))) {
+            MatchResult::Found
+        } else if self.has_pubkeys() {
+            MatchResult::KeyMismatch
         } else {
             MatchResult::NotFound
         }
     }
 
     pub fn check_cert(&self, cert: &Certificate) -> MatchResult {
-        if let Some((cas, host)) = &self.cas {
-            if !cert.cert_type().is_host() {
-                return MatchResult::CertNotVerified;
-            }
+        if !cert.cert_type().is_host() {
+            return MatchResult::CertNotVerified;
+        }
 
-            if !cert.critical_options().is_empty() {
-                return MatchResult::UnknownCriticalOptions;
-            }
+        if !cert.critical_options().is_empty() {
+            return MatchResult::UnknownCriticalOptions;
+        }
 
-            if !host_matched_principals(host, cert.valid_principals()) {
-                return MatchResult::PrincipalMismatch;
-            }
+        if !host_matched_principals(&self.host, cert.valid_principals()) {
+            return MatchResult::PrincipalMismatch;
+        }
 
-            let cas = cas.iter();
-            if cert.validate(cas).is_ok() {
+        let ca = digest(cert.signature_key());
+        let trusted = self.contains(LookupKey::Ca(ca));
+
+        if trusted {
+            let ca = Fingerprint::Sha256(ca);
+            if trusted && cert.validate([&ca]).is_ok() {
                 MatchResult::Found
             } else {
                 self.check_public_key_impl(cert.public_key(), SigAlg::from(&cert.algorithm()))
@@ -205,12 +223,31 @@ impl KnownHostsHandler {
         &'k self,
         config: &'c Preferred,
     ) -> PreferredPublicKeyAlgIter<'k, 'c> {
+        let known = self.known_public_key_algs();
+
         PreferredPublicKeyAlgIter {
-            known: self.pubkeys.as_deref().unwrap_or_default(),
-            known_it: self.pubkeys.as_ref().map(|v| v.iter()),
+            known_mask: known,
+            known_it: self.entries.iter(),
             prev: SigAlg::Other,
             preferred: config.key.iter(),
         }
+    }
+
+    fn known_public_key_algs(&self) -> u8 {
+        let mut known = 0;
+
+        // Match only until each algorithm is found for this host.
+        for entry in self.entries.iter() {
+            let LookupKey::Pubkey(alg, _) = entry.lookup else {
+                break;
+            };
+
+            if known & alg.mask() == 0 && self.host_matched(&entry.hosts) {
+                known |= alg.mask();
+            }
+        }
+
+        known
     }
 
     pub const fn preferred_cert_alg() -> &'static [Algorithm] {
@@ -219,19 +256,19 @@ impl KnownHostsHandler {
 }
 
 pub struct PreferredPublicKeyAlgIter<'k, 'c> {
-    known: &'k [(SigAlg, Fingerprint)],
-    known_it: Option<std::slice::Iter<'k, (SigAlg, Fingerprint)>>,
+    known_mask: u8,
+    known_it: std::slice::Iter<'k, PreparedEntry>,
     prev: SigAlg,
     preferred: std::slice::Iter<'c, Algorithm>,
 }
 
 impl PreferredPublicKeyAlgIter<'_, '_> {
     pub fn is_some(&self) -> bool {
-        self.known_it.is_some()
+        self.known_mask != 0
     }
 
     pub fn is_none(&self) -> bool {
-        self.known_it.is_none()
+        self.known_mask == 0
     }
 }
 
@@ -239,10 +276,16 @@ impl Iterator for PreferredPublicKeyAlgIter<'_, '_> {
     type Item = Algorithm;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let known = self.known_it.as_mut()?;
+        if self.is_none() {
+            return None;
+        }
 
-        for &(alg, _) in known {
-            if alg == self.prev {
+        for entry in &mut self.known_it {
+            let LookupKey::Pubkey(alg, _) = entry.lookup else {
+                break;
+            };
+
+            if self.known_mask & alg.mask() == 0 || alg == self.prev {
                 continue;
             }
             self.prev = alg;
@@ -251,11 +294,7 @@ impl Iterator for PreferredPublicKeyAlgIter<'_, '_> {
 
         for alg in &mut self.preferred {
             let alg_key = SigAlg::from(alg);
-            if self
-                .known
-                .binary_search_by_key(&alg_key, |(alg, _)| *alg)
-                .is_err()
-            {
+            if self.known_mask & alg_key.mask() == 0 {
                 return Some(alg.clone());
             }
         }
@@ -374,8 +413,7 @@ impl Handler for KnownHostsHandler {
 
 #[derive(Debug, Clone)]
 pub struct KnownHosts {
-    public_keys: Vec<Entry>,
-    cas: Vec<Entry>,
+    entries: Arc<[PreparedEntry]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -413,18 +451,38 @@ impl MatchResult {
 
 impl KnownHosts {
     pub fn new(known_hosts: ssh_key::KnownHosts) -> Self {
-        let mut public_keys = Vec::new();
-        let mut cas = Vec::new();
+        use ssh_key::known_hosts::Marker;
 
-        for entry in known_hosts.into_iter().filter_map(|entry| entry.ok()) {
-            match entry.marker() {
-                Some(&Marker::Revoked) => continue,
-                Some(&Marker::CertAuthority) => cas.push(entry),
-                None => public_keys.push(entry),
-            }
+        let mut entries = known_hosts
+            .into_iter()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+
+                let lookup = match entry.marker() {
+                    Some(&Marker::Revoked) => None,
+                    Some(&Marker::CertAuthority) => {
+                        Some(LookupKey::Ca(digest(entry.public_key().key_data())))
+                    }
+                    None => {
+                        let pubkey = entry.public_key();
+                        let alg = SigAlg::from(&pubkey.algorithm());
+                        (alg != SigAlg::Other)
+                            .then(|| LookupKey::Pubkey(alg, digest(pubkey.key_data())))
+                    }
+                };
+
+                lookup.map(|lookup| PreparedEntry {
+                    lookup,
+                    hosts: entry.into(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        entries.sort_unstable_by_key(|entry| entry.lookup);
+
+        Self {
+            entries: entries.into(),
         }
-
-        Self { public_keys, cas }
     }
 
     pub fn parse(known_hosts: &str) -> Self {
@@ -475,7 +533,6 @@ impl MakeHandler for KnownHosts {
         host: &crate::config::Host,
     ) -> Result<Context<Self::Handler>, Self::Error> {
         use russh::client::Config;
-        use std::sync::Arc;
 
         let handler = self.handler(&host.dest.name, host.dest.port);
         let mut conf = Config::default();
