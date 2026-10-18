@@ -2,20 +2,33 @@ use t::openrussh_client;
 
 use openrussh_client::config::Chain;
 
-fn setup_conf(append: &str) -> Result<impl std::io::Read, t::Error> {
+fn setup_conf<'a>(
+    append: impl IntoIterator<Item = &'a str>,
+) -> Result<impl std::io::Read, t::Error> {
     use std::io::Cursor;
 
     let home = t::home_dir()?;
     let default_path = home.join(".ssh/config");
     let mut conf = std::fs::read_to_string(default_path)?;
-    if !append.is_empty() {
-        conf.push_str("Host bob-test\n");
-        conf.push_str(append);
+
+    let mut append = append.into_iter();
+    if let Some(item) = append.next() {
+        conf.push_str("Host bob-test\n    ");
+        conf.push_str(item.trim());
+        conf.push('\n');
+    }
+    for item in append {
+        conf.push_str("    ");
+        conf.push_str(item.trim());
+        conf.push('\n');
     }
     Ok(Cursor::new(conf.into_bytes()))
 }
 
-fn parse_target(host: &str, append: &str) -> Result<Chain, t::Error> {
+fn parse_target<'a>(
+    host: &str,
+    append: impl IntoIterator<Item = &'a str>,
+) -> Result<Chain, t::Error> {
     use openrussh_client::config::Target;
     use openrussh_client::ssh2_config::{ParseRule, SshConfig};
     use std::io::BufReader;
@@ -46,7 +59,7 @@ fn main() {
     let mut rt = t::runtime();
 
     rt.register("simple command", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -66,7 +79,7 @@ fn main() {
     });
 
     rt.register("redirect", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -103,7 +116,7 @@ fn main() {
     });
 
     rt.register("failed command", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -120,7 +133,7 @@ fn main() {
     });
 
     rt.register("control flows", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -175,7 +188,7 @@ fn main() {
     });
 
     rt.register("cat stdin", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -227,7 +240,7 @@ fn main() {
     });
 
     rt.register("expand command", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;
@@ -250,7 +263,10 @@ fn main() {
     });
 
     rt.register("shell request", async || {
-        let host = parse_target("bob-test", "    IdentityFile ~/.ssh/id_ed25519")?;
+        let host = parse_target(
+            "bob-test",
+            ["IdentityFile ~/.ssh/id_ed25519", "RequestTTY no"],
+        )?;
         let known_hosts = KnownHosts::parse_default_path()?;
 
         let conn = Connection::connect(&host, known_hosts).await?;

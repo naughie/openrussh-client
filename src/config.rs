@@ -170,11 +170,56 @@ impl Default for Auth {
     }
 }
 
+/// Whether or not you [request PTY](russh::Channel::request_pty()) when you
+/// [execute a command](russh::Channel::exec()) or
+/// [request a shell](russh::Channel::request_shell()).
+///
+/// When trying to request PTY, we use [`IsTerminal`](std::io::IsTerminal) for checking
+/// if [`stdin`](std::io::stdin()) is a terminal.
+///
+/// If it is not a terminal, then we fallback to the default dimension and default modes.
+/// If it is a terminal, then we use [`terminal_size_of(stdin)`](terminal_size::terminal_size_of())
+/// to get the dimension and [`tcgetattr(stdin)`](libc::tcgetattr()) to get the terminal modes.
+///
+/// The terminal name is obtained via [`std::env::var("TERM")`](std::env::var()).
+///
+/// # Platform-specific behavior
+///
+/// We do not call [`tcgetattr(stdin)`](libc::tcgetattr()) on non-Unix targets.
+/// Instead, we set nothing (`&[]`) for the terminal modes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RequestTty {
+    /// Never requests PTY (`RequestTTY no`).
+    Never,
+    /// Always requests PTY (`RequestTTY force`).
+    Always,
+    /// Requests PTY if `stdin` is TTY/PTY (`RequestTTY yes`).
+    IfTty,
+    /// Requests PTY if you request a shell (`RequestTTY auto`).
+    #[default]
+    ForShell,
+}
+
+impl RequestTty {
+    fn from_str(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("no") {
+            Self::Never
+        } else if s.eq_ignore_ascii_case("yes") {
+            Self::IfTty
+        } else if s.eq_ignore_ascii_case("force") {
+            Self::Always
+        } else {
+            Self::ForShell
+        }
+    }
+}
+
 /// Represents a configuration for a server, both the final target and bastions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Host {
     pub dest: Dest,
     pub auth: Auth,
+    pub tty: RequestTty,
 }
 
 /// Bastion chain, from the local server to the target server.
@@ -602,9 +647,12 @@ fn query(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
 
     let auth = parse_auth_methods(params);
 
+    let tty = parse_tty(params);
+
     Ok(Host {
         dest: Dest { name, port, user },
         auth,
+        tty,
     })
 }
 
@@ -685,6 +733,14 @@ fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
         identities_only,
         includes_none: true,
     }
+}
+
+fn parse_tty(conf: &mut OpenSshHost) -> RequestTty {
+    conf.unsupported_fields
+        .get("requesttty")
+        .and_then(|v| v.first())
+        .map(|s| RequestTty::from_str(s))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -958,6 +1014,36 @@ Host test5
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn parse_tty() {
+        let conf = "
+Host test1
+    IdentityFile path
+Host test2
+    RequestTTY no
+Host test3
+    RequestTTY yes
+Host test4
+    RequestTTY force
+Host test5
+    RequestTTY auto
+Host test6
+    RequestTTY unknown
+        ";
+        let host = query_config(conf, "test1");
+        assert_eq!(host.tty, RequestTty::ForShell);
+        let host = query_config(conf, "test2");
+        assert_eq!(host.tty, RequestTty::Never);
+        let host = query_config(conf, "test3");
+        assert_eq!(host.tty, RequestTty::IfTty);
+        let host = query_config(conf, "test4");
+        assert_eq!(host.tty, RequestTty::Always);
+        let host = query_config(conf, "test5");
+        assert_eq!(host.tty, RequestTty::ForShell);
+        let host = query_config(conf, "test6");
+        assert_eq!(host.tty, RequestTty::ForShell);
     }
 
     #[test]

@@ -14,11 +14,16 @@ use russh::client::Handler;
 
 impl<H: Handler> crate::connect::Connection<H> {
     pub async fn exec(&self, cmd: Command<Completed>) -> Result<Child, russh::Error> {
-        cmd::exec(self.handle(), cmd.into_inner().into_bytes()).await
+        cmd::exec(
+            self.handle(),
+            cmd.into_inner().into_bytes(),
+            self.request_tty(),
+        )
+        .await
     }
 
     pub async fn shell(&self) -> Result<Child, russh::Error> {
-        shell::shell(self.handle()).await
+        shell::shell(self.handle(), self.request_tty()).await
     }
 }
 
@@ -26,7 +31,9 @@ mod helpers {
     use super::cmd::seal::RedirectToSeal;
     use super::cmd::{Redirect, RedirectMode, RedirectTo};
     use super::escape::{Arg, Escaper, SurroundBy};
+    use crate::config::RequestTty;
     use core::fmt::NumBuffer;
+    use std::borrow::Cow;
 
     pub(super) fn env<A: Arg>(buf: &mut String, key: &str, value: A) {
         {
@@ -111,5 +118,161 @@ mod helpers {
         }
 
         buf.push(' ');
+    }
+
+    pub(super) struct TtyConf {
+        pub(super) term: Cow<'static, str>,
+        pub(super) col_width: u32,
+        pub(super) row_height: u32,
+        pub(super) pix_width: u32,
+        pub(super) pix_height: u32,
+        pub(super) terminal_modes: Cow<'static, [(russh::Pty, u32)]>,
+    }
+
+    pub(super) fn tty_conf(tty: RequestTty, shell: bool) -> Option<TtyConf> {
+        use russh::Pty;
+        use std::io::{self, IsTerminal as _};
+
+        fn get_term() -> Cow<'static, str> {
+            if let Ok(term) = std::env::var("TERM") {
+                Cow::Owned(term)
+            } else {
+                Cow::Borrowed("xterm")
+            }
+        }
+
+        fn default_conf(term: Cow<'static, str>) -> TtyConf {
+            let size = Size::default();
+            TtyConf {
+                term,
+                col_width: size.col_width,
+                row_height: size.row_height,
+                pix_width: 0,
+                pix_height: 0,
+                terminal_modes: Cow::Borrowed(&[]),
+            }
+        }
+
+        struct Size {
+            col_width: u32,
+            row_height: u32,
+        }
+        impl Size {
+            fn default() -> Self {
+                Self {
+                    col_width: 80,
+                    row_height: 24,
+                }
+            }
+        }
+
+        fn get_size(stdin: &io::Stdin) -> Size {
+            use terminal_size::{Height, Width, terminal_size_of};
+            terminal_size_of(stdin)
+                .map(|(Width(w), Height(h))| Size {
+                    col_width: w as u32,
+                    row_height: h as u32,
+                })
+                .unwrap_or(Size::default())
+        }
+
+        #[cfg(not(unix))]
+        fn get_modes(_stdin: &io::Stdin) -> Cow<'static, [(Pty, u32)]> {
+            Cow::Borrowed(&[])
+        }
+
+        #[cfg(unix)]
+        fn get_modes(stdin: &io::Stdin) -> Cow<'static, [(Pty, u32)]> {
+            use std::{mem::MaybeUninit, os::fd::AsRawFd as _};
+
+            let mut termios = MaybeUninit::<libc::termios>::uninit();
+
+            if unsafe { libc::tcgetattr(stdin.as_raw_fd(), termios.as_mut_ptr()) } != 0 {
+                return Cow::Borrowed(&[]);
+            }
+
+            let t = unsafe { termios.assume_init() };
+
+            Cow::Owned(vec![
+                (Pty::VINTR, t.c_cc[libc::VINTR] as u32),
+                (Pty::VQUIT, t.c_cc[libc::VQUIT] as u32),
+                (Pty::VERASE, t.c_cc[libc::VERASE] as u32),
+                (Pty::VKILL, t.c_cc[libc::VKILL] as u32),
+                (Pty::VEOF, t.c_cc[libc::VEOF] as u32),
+                (Pty::ECHO, u32::from(t.c_lflag & libc::ECHO != 0)),
+                (Pty::ICANON, u32::from(t.c_lflag & libc::ICANON != 0)),
+                (Pty::ISIG, u32::from(t.c_lflag & libc::ISIG != 0)),
+                (Pty::ICRNL, u32::from(t.c_iflag & libc::ICRNL != 0)),
+                (Pty::IXON, u32::from(t.c_iflag & libc::IXON != 0)),
+                (Pty::OPOST, u32::from(t.c_oflag & libc::OPOST != 0)),
+            ])
+        }
+
+        match tty {
+            RequestTty::Never => None,
+            RequestTty::ForShell => {
+                if !shell {
+                    return None;
+                }
+
+                let term = get_term();
+                let stdin = io::stdin();
+
+                if stdin.is_terminal() {
+                    let size = get_size(&stdin);
+                    let terminal_modes = get_modes(&stdin);
+
+                    Some(TtyConf {
+                        term,
+                        col_width: size.col_width,
+                        row_height: size.row_height,
+                        pix_width: 0,
+                        pix_height: 0,
+                        terminal_modes,
+                    })
+                } else {
+                    Some(default_conf(term))
+                }
+            }
+            RequestTty::IfTty => {
+                let stdin = io::stdin();
+                if !stdin.is_terminal() {
+                    return None;
+                }
+
+                let term = get_term();
+                let size = get_size(&stdin);
+                let terminal_modes = get_modes(&stdin);
+
+                Some(TtyConf {
+                    term,
+                    col_width: size.col_width,
+                    row_height: size.row_height,
+                    pix_width: 0,
+                    pix_height: 0,
+                    terminal_modes,
+                })
+            }
+            RequestTty::Always => {
+                let term = get_term();
+                let stdin = io::stdin();
+
+                if stdin.is_terminal() {
+                    let size = get_size(&stdin);
+                    let terminal_modes = get_modes(&stdin);
+
+                    Some(TtyConf {
+                        term,
+                        col_width: size.col_width,
+                        row_height: size.row_height,
+                        pix_width: 0,
+                        pix_height: 0,
+                        terminal_modes,
+                    })
+                } else {
+                    Some(default_conf(term))
+                }
+            }
+        }
     }
 }

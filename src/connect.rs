@@ -9,7 +9,7 @@
 
 use crate::auth::Error as AuthError;
 use crate::auth::{AuthMethods, AuthResult, Authenticator};
-use crate::config::{Chain, Dest, Host};
+use crate::config::{Chain, Dest, Host, RequestTty};
 
 use russh::client::Config;
 use russh::client::Handle;
@@ -242,6 +242,7 @@ impl<H: Handler> Error<H> {
 /// are kept alive through the forwarding channels used by the target connection.
 pub struct Connection<H: Handler> {
     handle: Handle<H>,
+    tty: RequestTty,
 }
 
 impl<H: Handler> Connection<H> {
@@ -251,6 +252,14 @@ impl<H: Handler> Connection<H> {
 
     pub fn handle_mut(&mut self) -> &mut Handle<H> {
         &mut self.handle
+    }
+
+    pub fn request_tty(&self) -> RequestTty {
+        self.tty
+    }
+
+    pub fn request_tty_mut(&mut self) -> &mut RequestTty {
+        &mut self.tty
     }
 
     /// Alias of [`Handle::disconnect()`].
@@ -394,7 +403,10 @@ impl<H: Handler + Send + 'static> Connection<H> {
                 .map_err(Error::cast::<M::Error>)?
         };
 
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            tty: target.target.tty,
+        })
     }
 }
 
@@ -852,6 +864,7 @@ mod tests {
                     includes_none: false,
                     ..Default::default()
                 },
+                tty: Default::default(),
             },
             bastions: Some(
                 vec![
@@ -867,6 +880,7 @@ mod tests {
                             includes_none: false,
                             ..Default::default()
                         },
+                        tty: Default::default(),
                     },
                     Host {
                         dest: Dest {
@@ -880,6 +894,7 @@ mod tests {
                             includes_none: false,
                             ..Default::default()
                         },
+                        tty: Default::default(),
                     },
                 ]
                 .into_boxed_slice(),
