@@ -95,6 +95,32 @@ impl<H> Context<H> {
     }
 }
 
+/// Clones a [`Handler`] for each [`make_handler()`](MakeHandler::make_handler()) call.
+pub struct ContextCloner<H>(Context<H>);
+
+impl<H: Handler + Clone + Send + 'static> Context<H> {
+    /// Creates a [`MakeHandler`] that clones `H` for each
+    /// [`make_handler()`](MakeHandler::make_handler()) call.
+    pub fn cloner(self) -> ContextCloner<H> {
+        ContextCloner(self)
+    }
+}
+
+impl<H: Handler> ContextCloner<H> {
+    pub fn into_context(self) -> Context<H> {
+        self.0
+    }
+}
+
+impl<H: Handler + Clone + Send + 'static> MakeHandler for ContextCloner<H> {
+    type Handler = H;
+    type Error = std::convert::Infallible;
+
+    fn make_handler(&self, _host: &Host) -> Result<Context<Self::Handler>, Self::Error> {
+        Ok(self.0.clone())
+    }
+}
+
 /// Creates a [`Handler`] for each bastion.
 ///
 /// Since there can be multiple servers to connect (i.e., bastions), and since the [`Handler`]
