@@ -278,7 +278,7 @@
 //! - **serde** (default: disabled): Enables `serde` feature of [`russh`].
 //! - **russh-default** (default: enabled): Enables the default feature flags of [`russh`]: `aws-lc-rs`, `rsa`, `flate2`.
 //! - **known-hosts** (default: enabled): Exposes the reader for `~/.ssh/known_hosts` and the associated [`Handler`](russh::client::Handler) implementation.
-//! - **cmd** (default: enabled): Defines the rich interface to send `exec`/`shell` requests.
+//! - **process** (default: enabled): Defines the rich interface to send `exec`/`shell` requests.
 
 pub mod error;
 
@@ -291,7 +291,7 @@ pub mod connect;
 #[cfg(feature = "known-hosts")]
 pub mod known_hosts;
 
-#[cfg(feature = "cmd")]
+#[cfg(feature = "process")]
 pub mod process;
 
 pub use russh;

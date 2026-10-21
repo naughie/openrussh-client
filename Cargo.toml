@@ -32,7 +32,7 @@ terminal_size = { version = "0.4", optional = true }
 either = "1.18"
 
 [features]
-default = ["russh-default", "known-hosts", "cmd"]
+default = ["russh-default", "known-hosts", "process"]
 
 russh-default = ["russh/aws-lc-rs", "russh/rsa", "russh/flate2"]
 
@@ -45,7 +45,7 @@ serde = ["russh/serde"]
 
 known-hosts = ["dep:glob", "dep:hmac", "dep:sha1"]
 
-cmd = ["dep:bytes", "dep:libc", "dep:terminal_size"]
+process = ["dep:bytes", "dep:libc", "dep:terminal_size"]
 
 [dev-dependencies]
 rand = "0.10"
