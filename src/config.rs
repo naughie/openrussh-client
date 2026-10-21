@@ -40,9 +40,6 @@ use std::slice::Windows;
 #[cfg(feature = "config-parser")]
 use ssh2_config::{HostParams as OpenSshHost, SshConfig as OpenSshConfig};
 
-#[cfg(feature = "config-parser")]
-const AGENT_ENV: &str = "SSH_AUTH_SOCK";
-
 /// Errors when reading or parsing an OpenSSH config.
 #[non_exhaustive]
 #[derive(Debug)]
@@ -718,6 +715,8 @@ impl ExactSizeIterator for BastionIter<'_> {
 mod parsers {
     use super::*;
 
+    pub(super) const AGENT_ENV: &str = "SSH_AUTH_SOCK";
+
     pub(super) fn parse_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Error> {
         let mut target_params = conf.query(target.host);
         let target_host = parse_host(&mut target_params, target)?;
@@ -876,6 +875,7 @@ mod parsers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parsers::AGENT_ENV;
 
     #[test]
     fn parse_target() {
