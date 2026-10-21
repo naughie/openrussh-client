@@ -66,8 +66,8 @@ We deliberately support only the following host key / certificate algorithms whe
 
 ```toml
 [dependencies]
-tokio = { version = "1.53.1", features = ["full"] }
-openrussh-client = "0.3"
+tokio = { version = "1.54.0", features = ["full"] }
+openrussh-client = "0.4"
 ```
 
 `src/main.rs`:

@@ -56,7 +56,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! openrussh-client = "0.1"
+//! openrussh-client = "0.4"
 //! ```
 //!
 //! `main.rs`:
