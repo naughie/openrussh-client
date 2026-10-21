@@ -37,9 +37,10 @@ use std::iter::Rev;
 use std::path::PathBuf;
 use std::slice::Windows;
 
-use ssh2_config::HostParams as OpenSshHost;
-use ssh2_config::SshConfig as OpenSshConfig;
+#[cfg(feature = "config-parser")]
+use ssh2_config::{HostParams as OpenSshHost, SshConfig as OpenSshConfig};
 
+#[cfg(feature = "config-parser")]
 const AGENT_ENV: &str = "SSH_AUTH_SOCK";
 
 /// Errors when reading or parsing an OpenSSH config.
@@ -47,6 +48,7 @@ const AGENT_ENV: &str = "SSH_AUTH_SOCK";
 #[derive(Debug)]
 pub enum Error {
     /// Could not get the user name by [`whoami::username()`].
+    #[cfg(feature = "config-parser")]
     UserNotFound(whoami::Error),
 }
 
@@ -125,6 +127,7 @@ impl<'a> Target<'a> {
     ///   with the path component `~user/`. Otherwise they are ignored.
     /// - Resolving the `ProxyJump` chain by recursively querying the OpenSSH config.
     ///   It does not check `ProxyCommand`.
+    #[cfg(feature = "config-parser")]
     pub fn query(self, conf: &OpenSshConfig) -> Result<Chain, Error> {
         Chain::new(self, conf)
     }
@@ -201,6 +204,7 @@ pub enum RequestTty {
     ForShell,
 }
 
+#[cfg(feature = "config-parser")]
 impl RequestTty {
     fn from_str(s: &str) -> Self {
         if s.eq_ignore_ascii_case("no") {
@@ -411,6 +415,7 @@ impl Chain {
     ///         && v[1].dest.name == "host1"
     /// }));
     /// ```
+    #[cfg(feature = "config-parser")]
     pub fn new(target: Target<'_>, conf: &OpenSshConfig) -> Result<Self, Error> {
         resolve_config(target, conf)
     }
@@ -591,6 +596,7 @@ impl ExactSizeIterator for BastionIter<'_> {
     }
 }
 
+#[cfg(feature = "config-parser")]
 fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Error> {
     let mut target_params = conf.query(target.host);
     let target_host = query(&mut target_params, target)?;
@@ -632,6 +638,7 @@ fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Err
     }
 }
 
+#[cfg(feature = "config-parser")]
 fn query(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
     let name = params
         .host_name
@@ -657,6 +664,7 @@ fn query(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
     })
 }
 
+#[cfg(feature = "config-parser")]
 fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
     fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
         use std::path::Component;
@@ -736,6 +744,7 @@ fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
     }
 }
 
+#[cfg(feature = "config-parser")]
 fn parse_tty(conf: &mut OpenSshHost) -> RequestTty {
     conf.unsupported_fields
         .get("requesttty")

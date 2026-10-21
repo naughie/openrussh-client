@@ -9,6 +9,7 @@ use std::fmt::{self, Debug, Display};
 pub use russh::Error as RusshError;
 
 impl Display for ConfigParseError {
+    #[cfg(feature = "config-parser")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UserNotFound(e) => write!(
@@ -17,13 +18,22 @@ impl Display for ConfigParseError {
             ),
         }
     }
+    #[cfg(not(feature = "config-parser"))]
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
 }
 
 impl StdError for ConfigParseError {
+    #[cfg(feature = "config-parser")]
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::UserNotFound(e) => Some(e),
         }
+    }
+    #[cfg(not(feature = "config-parser"))]
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        None
     }
 }
 

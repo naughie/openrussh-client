@@ -17,9 +17,9 @@ exclude = ["/tests/", ".dockerignore"]
 
 [dependencies]
 russh = { version = "0.64", default-features = false }
-ssh2-config = "0.8"
+ssh2-config = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["io-util", "net"] }
-whoami = "2.1"
+whoami = { version = "2.1", optional = true }
 
 glob = { version =  "0.3", optional = true }
 hmac = { version =  "0.13", optional = true }
@@ -32,7 +32,7 @@ terminal_size = { version = "0.4", optional = true }
 either = "1.18"
 
 [features]
-default = ["russh-default", "known-hosts", "process"]
+default = ["russh-default", "config-parser", "known-hosts", "process"]
 
 russh-default = ["russh/aws-lc-rs", "russh/rsa", "russh/flate2"]
 
@@ -43,8 +43,8 @@ rsa = ["russh/rsa"]
 flate2 = ["russh/flate2"]
 serde = ["russh/serde"]
 
+config-parser = ["dep:ssh2-config", "dep:whoami"]
 known-hosts = ["dep:glob", "dep:hmac", "dep:sha1"]
-
 process = ["dep:bytes", "dep:libc", "dep:terminal_size"]
 
 [dev-dependencies]

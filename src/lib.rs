@@ -277,6 +277,8 @@
 //! - **flate2** (default: enabled): Enables `flate2` feature of [`russh`].
 //! - **serde** (default: disabled): Enables `serde` feature of [`russh`].
 //! - **russh-default** (default: enabled): Enables the default feature flags of [`russh`]: `aws-lc-rs`, `rsa`, `flate2`.
+//! - **config-parser** (default: enabled): Exposes the functions to convert `~/.ssh/config`
+//!   to our [config types](crate::config).
 //! - **known-hosts** (default: enabled): Exposes the reader for `~/.ssh/known_hosts` and the associated [`Handler`](russh::client::Handler) implementation.
 //! - **process** (default: enabled): Defines the rich interface to send `exec`/`shell` requests.
 
@@ -295,6 +297,7 @@ pub mod known_hosts;
 pub mod process;
 
 pub use russh;
+#[cfg(feature = "config-parser")]
 pub use ssh2_config;
 
 #[cfg(test)]
