@@ -318,7 +318,7 @@ impl RequestTty {
 
     /// Parses the OpenSSH parameters. See also [`Target::query()`].
     ///
-    /// No side effects that mutate `conf`:
+    /// No side effects that mutate `conf`.
     ///
     /// ```
     /// use openrussh_client::config::{RequestTty, Target};
@@ -331,7 +331,7 @@ impl RequestTty {
     ///     directive.to_ascii_lowercase(),
     ///     vec!["yes".to_owned()]
     /// );
-    /// let tty = RequestTty::parse_openssh(&mut conf);
+    /// let tty = RequestTty::parse_openssh(&conf);
     ///
     /// assert_eq!(tty, RequestTty::IfTty);
     /// ```
