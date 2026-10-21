@@ -296,3 +296,23 @@ pub mod process;
 
 pub use russh;
 pub use ssh2_config;
+
+#[cfg(test)]
+mod test_helpers {
+    use std::time::Duration;
+    use tokio::task::JoinHandle;
+
+    const TIMEOUT_SEC: u64 = 30;
+
+    pub(super) async fn stop_server(mut server: JoinHandle<()>) {
+        tokio::select! {
+            res = &mut server => {
+                assert!(res.is_ok(), "server encountered an error unexpectedly: {res:?}");
+            }
+            _ = tokio::time::sleep(Duration::from_secs(TIMEOUT_SEC)) => {
+                server.abort();
+                panic!("Test SSH server did not stop within {TIMEOUT_SEC} seconds");
+            }
+        }
+    }
+}

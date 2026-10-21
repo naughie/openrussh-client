@@ -429,6 +429,7 @@ async fn auth<H: Handler>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::stop_server;
 
     use crate::auth::{AuthLocalKind, AuthMethod, AuthMethods};
 
@@ -459,8 +460,7 @@ mod tests {
         server_private_key: PrivateKey,
     ) -> (JoinHandle<()>, UnixStream)
     where
-        H: russh::server::Handler + fmt::Debug + Send + 'static,
-        H::Error: fmt::Debug,
+        H: russh::server::Handler<Error = russh::Error> + fmt::Debug + Send + 'static,
     {
         let config = server_config(server_private_key);
 
@@ -471,7 +471,12 @@ mod tests {
                 .await
                 .unwrap();
 
-            session.await.unwrap();
+            match session.await {
+                Ok(()) => {}
+                Err(russh::Error::IO(error))
+                    if error.kind() == std::io::ErrorKind::UnexpectedEof => {}
+                Err(error) => panic!("Test SSH server session failed: {error:?}"),
+            }
         });
 
         (task, client_socket)
@@ -482,8 +487,7 @@ mod tests {
         server_private_key: PrivateKey,
     ) -> (JoinHandle<()>, SocketAddr)
     where
-        H: server::Handler + fmt::Debug + Send + 'static,
-        H::Error: fmt::Debug,
+        H: server::Handler<Error = russh::Error> + fmt::Debug + Send + 'static,
     {
         let config = server_config(server_private_key);
 
@@ -498,7 +502,11 @@ mod tests {
                 .await
                 .unwrap();
 
-            session.await.unwrap();
+            match session.await {
+                Ok(()) => {}
+                Err(russh::Error::IO(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
+                Err(e) => panic!("Test SSH server session failed: {e}"),
+            }
         });
 
         (task, addr)
@@ -691,11 +699,8 @@ mod tests {
         )
         .await;
         assert!(conn.is_ok());
-        conn.unwrap()
-            .disconnect(Disconnect::ByApplication, "test finished", "")
-            .await
-            .unwrap();
-        server.await.ok();
+        disconn(conn).await;
+        stop_server(server).await;
 
         let key_pair2 = KeyPairs::rand();
         let (server, sock) = start_ssh_server_sock(
@@ -722,7 +727,7 @@ mod tests {
             .await
             .is_err_and(|e| e.failed())
         );
-        server.await.ok();
+        stop_server(server).await;
     }
 
     #[tokio::test]
@@ -750,11 +755,8 @@ mod tests {
         )
         .await;
         assert!(conn.is_ok());
-        conn.unwrap()
-            .disconnect(Disconnect::ByApplication, "test finished", "")
-            .await
-            .unwrap();
-        server.await.ok();
+        disconn(conn).await;
+        stop_server(server).await;
 
         let key_pair2 = KeyPairs::rand();
         let (server, addr) = start_ssh_server_tcp(
@@ -781,7 +783,7 @@ mod tests {
             .await
             .is_err_and(|e| e.failed())
         );
-        server.await.ok();
+        stop_server(server).await;
     }
 
     #[tokio::test]
@@ -903,13 +905,17 @@ mod tests {
 
         let conn = Connection::connect(&chain, make_handler).await;
         assert!(conn.is_ok());
+        disconn(conn.map(|conn| conn.handle)).await;
+
+        stop_server(server3).await;
+        stop_server(server2).await;
+        stop_server(server1).await;
+    }
+
+    async fn disconn<H: Handler + Send + 'static, E: fmt::Debug>(conn: Result<Handle<H>, E>) {
         conn.unwrap()
             .disconnect(Disconnect::ByApplication, "test finished", "")
             .await
             .unwrap();
-
-        server3.await.ok();
-        server2.await.ok();
-        server1.await.ok();
     }
 }

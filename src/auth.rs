@@ -1208,6 +1208,7 @@ pub async fn auth<H: Handler>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::stop_server;
 
     use russh::{
         Disconnect, client,
@@ -1518,7 +1519,7 @@ mod tests {
             false,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
 
         let keypair = KeyPairs::rand();
         let (server, sock) = start_ssh_server(
@@ -1533,7 +1534,7 @@ mod tests {
             false,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
 
         let keypair = KeyPairs::rand();
         let (server, sock) = start_ssh_server(ServerHandler3, keypair.server_private_key).await;
@@ -1544,7 +1545,7 @@ mod tests {
             true,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
     }
 
     #[tokio::test]
@@ -1570,7 +1571,7 @@ mod tests {
             true,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
 
         let (server, sock) = start_ssh_server(
             ServerHandler2::new(keypair.ca_public_key),
@@ -1584,7 +1585,7 @@ mod tests {
             false,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
 
         let (server, sock) = start_ssh_server(ServerHandler3, keypair.server_private_key).await;
         test_auth(
@@ -1594,7 +1595,7 @@ mod tests {
             false,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
     }
 
     #[tokio::test]
@@ -1626,7 +1627,7 @@ mod tests {
             false,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
 
         let (server, sock) = start_ssh_server(
             ServerHandler2::new(keypair.ca_public_key),
@@ -1640,7 +1641,7 @@ mod tests {
             true,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
 
         let (server, sock) = start_ssh_server(ServerHandler3, keypair.server_private_key).await;
         test_auth(
@@ -1650,6 +1651,6 @@ mod tests {
             false,
         )
         .await;
-        server.await.ok();
+        stop_server(server).await;
     }
 }
