@@ -713,7 +713,10 @@ impl ExactSizeIterator for BastionIter<'_> {
 
 #[cfg(feature = "config-parser")]
 mod parsers {
-    use super::*;
+    use super::{Auth, Chain, Dest, Host, RequestTty, Target};
+    use super::{Error, OpenSshConfig, OpenSshHost};
+
+    use std::path::PathBuf;
 
     pub(super) const AGENT_ENV: &str = "SSH_AUTH_SOCK";
 
