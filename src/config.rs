@@ -335,7 +335,7 @@ impl RequestTty {
     ///
     /// assert_eq!(tty, RequestTty::IfTty);
     /// ```
-    pub fn parse_openssh(conf: &mut OpenSshHost) -> Self {
+    pub fn parse_openssh(conf: &OpenSshHost) -> Self {
         parsers::parse_tty(conf)
     }
 }
@@ -866,7 +866,7 @@ mod parsers {
         }
     }
 
-    pub(super) fn parse_tty(conf: &mut OpenSshHost) -> RequestTty {
+    pub(super) fn parse_tty(conf: &OpenSshHost) -> RequestTty {
         conf.unsupported_fields
             .get("requesttty")
             .and_then(|v| v.first())
