@@ -2,6 +2,21 @@ use super::{Arg, Escaper};
 
 use std::fmt;
 
+/// Wraps a value implementing [`fmt::Display`] as a command argument.
+///
+/// The formatted value is escaped in the same way as [`Escaper::escape_str()`].
+///
+/// ```
+/// use openrussh_client::process::Command;
+/// use openrussh_client::process::escape::Display;
+///
+/// let cmd = Command::new()
+///     .prog("echo")
+///     .arg(Display(format_args!("{}-{}", 1, 2)))
+///     .complete(false);
+///
+/// assert_eq!(cmd.as_str(), "'echo' '1-2' ; ");
+/// ```
 #[derive(Debug, Clone)]
 pub struct Display<T>(pub T);
 

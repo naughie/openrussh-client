@@ -1,5 +1,21 @@
 use super::{Arg, Escaper};
 
+/// Concatenates the items of an [`IntoIterator`] into a single argument.
+///
+/// Items are escaped and written without separators. The surrounding quotes are selected by the
+/// item type's [`Arg::need_double()`], including for an empty iterator.
+///
+/// ```
+/// use openrussh_client::process::Command;
+/// use openrussh_client::process::escape::Concat;
+///
+/// let cmd = Command::new()
+///     .prog("echo")
+///     .arg(Concat(["I", " don't", " know"]))
+///     .complete(false);
+///
+/// assert_eq!(cmd.as_str(), "'echo' 'I don'\\''t know' ; ");
+/// ```
 #[derive(Debug, Clone)]
 pub struct Concat<I>(pub I);
 

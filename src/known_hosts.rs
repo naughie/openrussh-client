@@ -1,4 +1,38 @@
-//! Utilities to read, parse, and check against a OpenSSH `known_hosts`.
+//! Utilities to read and parse OpenSSH `known_hosts` files and
+//! [`check_server_key()`](KnownHostsHandler::check_server_key()) against them.
+//!
+//! [`KnownHosts`] represents the trusted and revoked keys, and [`KnownHostsHandler`] checks the
+//! server host key for a given host and port. They support public keys and host certificates,
+//! including the
+//! [`@cert-authority`](openssh_known_hosts::Marker::CertAuthority) and
+//! [`@revoked`](openssh_known_hosts::Marker::Revoked) entries.
+//! `KnownHosts` also implements [`MakeHandler`] to create a handler and client config for each
+//! server in a connection chain.
+//!
+//! If no matched key is found, then the connection fails. We do not add it automatically, nor
+//! do we prompt you. If you need more flexibility, you can
+//! [`check_server_key()`](KnownHostsHandler::check_server_key()) directly in your own
+//! [`Handler`] implementation.
+//!
+//! # Usage
+//!
+//! ```
+//! # async fn dummy() {
+//! use openrussh_client::known_hosts::KnownHosts;
+//!
+//! use russh::client::{Config, connect};
+//!
+//! use std::sync::Arc;
+//!
+//! let known_hosts = KnownHosts::parse_default_path().unwrap();
+//! let handler = known_hosts.handler("my-host", 22);
+//!
+//! let mut conf = Config::default();
+//! handler.update_preferred_config(&mut conf.preferred);
+//!
+//! let handle = connect(Arc::new(conf), ("my-host", 22), handler).await.unwrap();
+//! # }
+//! ```
 
 use crate::connect::{Context, MakeHandler};
 
@@ -42,6 +76,37 @@ fn digest(key: &KeyData) -> Digest {
     }
 }
 
+/// Checks the server host key against the [`KnownHosts`] for a given host and port.
+///
+/// Its [`Handler`] implementation accepts only [`MatchResult::Found`] and
+/// rejects all server-initiated channels, including agent and X11 forwarding.
+///
+/// It matches the host patterns as follows:
+///
+/// - Plain patterns support `*` and `?`; brackets are literal. A comma-separated list must have
+///   at least one matched positive pattern and no matched `!` pattern.
+/// - A pattern without a port matches only port `22`. A `[host]:port` pattern matches the host
+///   and the decimal port separately, allowing `*` and `?` in both. It can also match port `22`.
+/// - A `|1|` hashed host name is checked with HMAC-SHA1 against `host` for port `22`, or
+///   `[host]:port` for any other port. A hash of `[host]:22` does not match port `22`.
+///
+/// Only the requested host is converted to [ASCII lowercase](str::to_ascii_lowercase()); the
+/// patterns are unchanged, and comparisons are case-sensitive. Wildcard matching uses a
+/// [glob pattern](glob::Pattern) with `case_sensitive = true`, `require_literal_separator = false`,
+/// and `require_literal_leading_dot = false`. Patterns that cannot be parsed do not match.
+/// See also [`KnownHostsHandler::new()`].
+///
+/// # Usage
+///
+/// ```
+/// # async fn dummy() {
+/// use openrussh_client::known_hosts::KnownHosts;
+///
+/// let known_hosts = KnownHosts::parse_default_path().unwrap();
+/// let handler = known_hosts.handler("test.com", 22);
+/// let handle = russh::client::connect(Default::default(), ("test.com", 22), handler).await.unwrap();
+/// # }
+/// ```
 pub struct KnownHostsHandler {
     trusted: Option<Arc<[PreparedEntry]>>,
     revoked: Option<Arc<[PreparedEntry]>>,
@@ -121,6 +186,23 @@ impl SigAlg {
 }
 
 impl KnownHostsHandler {
+    /// Creates a [`KnownHostsHandler`] for the requested host and port.
+    ///
+    /// It removes leading `[` characters, any suffix starting at the first `]:`, and trailing
+    /// `]` characters from `host`, then converts it to [ASCII lowercase](str::to_ascii_lowercase()).
+    /// The port number is always given by `port`, even if `host` contains a port suffix.
+    /// It is allocation-free except for `host.to_ascii_lowercase()`; the parsed entries are shared
+    /// via [`Arc`].
+    ///
+    /// ```
+    /// # async fn dummy() {
+    /// use openrussh_client::known_hosts::KnownHosts;
+    ///
+    /// let known_hosts = KnownHosts::parse_default_path().unwrap();
+    /// let handler = known_hosts.handler("test.com", 22);
+    /// let handle = russh::client::connect(Default::default(), ("test.com", 22), handler).await.unwrap();
+    /// # }
+    /// ```
     pub fn new(known_hosts: &KnownHosts, host: &str, port: u16) -> Self {
         let host = host.trim_start_matches('[');
         let host = host
@@ -176,6 +258,31 @@ impl KnownHostsHandler {
         })
     }
 
+    /// Checks the public key against the entries for the requested host and port.
+    ///
+    /// Keys are compared by [algorithm](PublicKey::algorithm()) and
+    /// [SHA-256 fingerprint](PublicKey::fingerprint()), ignoring their comments.
+    /// A matched `@revoked` entry returns [`MatchResult::Revoked`], even if the key is also
+    /// trusted. The order of the entries does not affect this result.
+    ///
+    /// Only the supported, unmarked public keys are trusted. See also [`KnownHosts::new()`].
+    /// If no matched public key is found, then it returns [`MatchResult::KeyMismatch`] if another
+    /// such key is known for this host, or [`MatchResult::NotFound`] otherwise.
+    /// `@cert-authority` entries do not count as public keys for either result.
+    ///
+    /// ```no_run
+    /// use openrussh_client::known_hosts::{KnownHosts, MatchResult};
+    /// use russh::keys::PublicKey;
+    ///
+    /// let known_hosts = "test.com ssh-rsa XXXXXXXXXX";
+    /// let known_hosts = KnownHosts::parse(known_hosts);
+    ///
+    /// let handler = known_hosts.handler("test.com", 22);
+    ///
+    /// let public_key = PublicKey::from_openssh("XXXXXXXXXX").unwrap();
+    /// let matched = handler.check_public_key(&public_key);
+    /// assert_eq!(matched, MatchResult::Found);
+    /// ```
     pub fn check_public_key(&self, pubkey: &PublicKey) -> MatchResult {
         self.check_public_key_impl(digest(pubkey.key_data()), SigAlg::from(&pubkey.algorithm()))
     }
@@ -193,6 +300,43 @@ impl KnownHostsHandler {
         }
     }
 
+    /// Checks the host certificate against the entries for the requested host and port.
+    ///
+    /// It checks the certificate type, critical options, and principals in this order:
+    ///
+    /// - If the certificate type is not `host`, it returns [`MatchResult::CertNotVerified`].
+    /// - If any critical options are present, it returns [`MatchResult::UnknownCriticalOptions`].
+    /// - If none of the principals match, it returns [`MatchResult::PrincipalMismatch`].
+    ///
+    /// An empty principals list accepts any host name. Otherwise each principal is matched with
+    /// `*` and `?` against the normalized host name, without a port, using the same glob options
+    /// as [`KnownHostsHandler`]. Principals are case-sensitive, with literal brackets and no
+    /// special meaning for a leading `!`.
+    ///
+    /// After those checks, it checks the [signing key](Certificate::signature_key()) and certified
+    /// public key for revocation. Both checks use the requested host and port. A matched
+    /// `@revoked` entry returns [`MatchResult::Revoked`].
+    ///
+    /// It looks up the signing key's SHA-256 fingerprint in the `@cert-authority` entries for
+    /// this host and port, then [`validate()`](Certificate::validate())s the certificate, checking
+    /// its signature and validity period against the system clock. Any validation error, including
+    /// an expired or not-yet-valid certificate or a clock error, falls back to checking the
+    /// certified public key as a regular public key. If no CA is found, then it returns
+    /// [`MatchResult::CertNotVerified`] without this fallback. Certificate extensions are ignored.
+    ///
+    /// ```no_run
+    /// use openrussh_client::known_hosts::{KnownHosts, MatchResult};
+    /// use russh::keys::Certificate;
+    ///
+    /// let known_hosts = "test.com ssh-rsa XXXXXXXXXX";
+    /// let known_hosts = KnownHosts::parse(known_hosts);
+    ///
+    /// let handler = known_hosts.handler("test.com", 22);
+    ///
+    /// let certificate = Certificate::from_openssh("XXXXXXXXXX").unwrap();
+    /// let matched = handler.check_cert(&certificate);
+    /// assert_eq!(matched, MatchResult::Found);
+    /// ```
     pub fn check_cert(&self, cert: &Certificate) -> MatchResult {
         if !cert.cert_type().is_host() {
             return MatchResult::CertNotVerified;
@@ -235,6 +379,28 @@ impl KnownHostsHandler {
         }
     }
 
+    /// Checks the server host key, calling either [`Self::check_public_key()`]
+    /// or [`Self::check_cert()`]
+    ///
+    /// The `hash_alg` field of [`PublicKeyOrCertificate::PublicKey`] does not affect the lookup.
+    ///
+    /// ```no_run
+    /// use openrussh_client::known_hosts::{KnownHosts, MatchResult};
+    /// use russh::keys::{PublicKey, PublicKeyOrCertificate};
+    ///
+    /// let known_hosts = "test.com ssh-rsa XXXXXXXXXX";
+    /// let known_hosts = KnownHosts::parse(known_hosts);
+    ///
+    /// let handler = known_hosts.handler("test.com", 22);
+    ///
+    /// let public_key = PublicKey::from_openssh("XXXXXXXXXX").unwrap();
+    /// let server_key = PublicKeyOrCertificate::PublicKey {
+    ///     key: public_key,
+    ///     hash_alg: None,
+    /// };
+    /// let matched = handler.check_server_key(&server_key);
+    /// assert_eq!(matched, MatchResult::Found);
+    /// ```
     pub fn check_server_key(&self, server_key: &PublicKeyOrCertificate) -> MatchResult {
         match server_key {
             PublicKeyOrCertificate::PublicKey { key, .. } => self.check_public_key(key),
@@ -242,6 +408,13 @@ impl KnownHostsHandler {
         }
     }
 
+    /// Puts the known public key algorithms first and sets the preferred certificate algorithms.
+    ///
+    /// It replaces `config.key` with
+    /// [`Self::preferred_public_key_alg()`] if any public key is known
+    /// for this host. Otherwise `key` is unchanged. It always replaces the
+    /// `config.host_key_certificates` with
+    /// [`Self::preferred_cert_alg()`].
     pub fn update_preferred_config(&self, config: &mut Preferred) {
         use std::borrow::Cow;
 
@@ -253,6 +426,44 @@ impl KnownHostsHandler {
         config.host_key_certificates = Cow::Borrowed(Self::preferred_cert_alg());
     }
 
+    /// Iterates over the known public key algorithms, followed by the remaining algorithms in
+    /// `config.key`.
+    ///
+    /// The known algorithms come first even if they are absent from `config.key`, in this order:
+    /// `ssh-ed25519`, `ecdsa-sha2-nistp521`, `ecdsa-sha2-nistp384`, `ecdsa-sha2-nistp256`, and
+    /// `rsa-sha2-256` (when the `rsa` feature is enabled). Each known algorithm occurs only once;
+    /// the remaining algorithms keep their order and duplicates from `config.key`.
+    ///
+    /// An RSA key read from `known_hosts` has no hash algorithm, so it is treated as
+    /// `rsa-sha2-256`. An explicit `rsa-sha2-512` in `config.key` remains in the trailing part.
+    /// When filtering `config.key`, the other RSA algorithms belong to the same group as
+    /// `rsa-sha2-256`.
+    /// Only unmarked entries determine the known algorithms; `@cert-authority` and `@revoked`
+    /// entries do not change this preference.
+    ///
+    /// If no public key is known for the requested host and port, then the iterator is empty.
+    ///
+    /// ```no_run
+    /// use openrussh_client::known_hosts::KnownHosts;
+    /// use russh::keys::ssh_key::{Algorithm, EcdsaCurve};
+    /// use russh::Preferred;
+    ///
+    /// use std::borrow::Cow;
+    ///
+    /// let known_hosts = "test.com ssh-ed25519 XXXXXXXXXX\ntest.com ecdsa-sha2-nistp521 YYYYYYYYYY";
+    /// let known_hosts = KnownHosts::parse(known_hosts);
+    ///
+    /// let handler = known_hosts.handler("test.com", 22);
+    ///
+    /// let config = Preferred {
+    ///     key: Cow::Owned(vec![Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 }]),
+    ///     ..Default::default()
+    /// };
+    /// let algorithms = handler.preferred_public_key_alg(&config)
+    ///     .map(|algorithm| algorithm.to_string())
+    ///     .collect::<Vec<String>>();
+    /// assert_eq!(algorithms, vec!["ssh-ed25519", "ecdsa-sha2-nistp521", "ecdsa-sha2-nistp256"]);
+    /// ```
     pub fn preferred_public_key_alg<'k, 'c>(
         &'k self,
         config: &'c Preferred,
@@ -284,6 +495,7 @@ impl KnownHostsHandler {
         known
     }
 
+    /// Alias to [`KnownHosts::preferred_cert_alg()`].
     pub const fn preferred_cert_alg() -> &'static [Algorithm] {
         KnownHosts::preferred_cert_alg()
     }
@@ -311,6 +523,8 @@ impl<'k> Iterator for TrustedIter<'k> {
 }
 impl FusedIterator for TrustedIter<'_> {}
 
+/// The [`Iterator`] of public key algorithms, returned by
+/// [`KnownHostsHandler::preferred_public_key_alg()`].
 pub struct PreferredPublicKeyAlgIter<'k, 'c> {
     known_mask: u8,
     known_it: TrustedIter<'k>,
@@ -319,10 +533,13 @@ pub struct PreferredPublicKeyAlgIter<'k, 'c> {
 }
 
 impl PreferredPublicKeyAlgIter<'_, '_> {
+    /// Returns `true` if any public key algorithm is known for the requested host and port.
+    /// It stays `true` even after the iterator is exhausted.
     pub fn is_some(&self) -> bool {
         self.known_mask != 0
     }
 
+    /// Returns `true` if no public key algorithm is known for the requested host and port.
     pub fn is_none(&self) -> bool {
         self.known_mask == 0
     }
@@ -468,19 +685,38 @@ impl Handler for KnownHostsHandler {
     }
 }
 
+/// Represents the trusted and revoked keys in an OpenSSH `known_hosts`.
+///
+/// It implements [`MakeHandler`] to create a [`KnownHostsHandler`] for each server.
+/// Each context starts with the default client [`Config`](russh::client::Config), then
+/// [`KnownHostsHandler::update_preferred_config()`] sets the preferred
+/// algorithms. The parsed entries are shared between the handlers via [`Arc`].
+///
+/// # Usage
+///
+/// ```
+/// # async fn dummy() {
+/// use openrussh_client::known_hosts::KnownHosts;
+///
+/// let known_hosts = KnownHosts::parse_default_path().unwrap();
+/// let handler = known_hosts.handler("test.com", 22);
+/// let handle = russh::client::connect(Default::default(), ("test.com", 22), handler).await.unwrap();
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct KnownHosts {
     trusted: Option<Arc<[PreparedEntry]>>,
     revoked: Option<Arc<[PreparedEntry]>>,
 }
 
+/// Result of checking a public key or certificate against the [`KnownHosts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MatchResult {
-    /// The public key or certificate already exists in `~/.known_hosts`.
+    /// The public key is trusted, or the certificate is verified by a trusted CA.
     Found,
-    /// The public key does not exist in `~/.known_hosts`.
+    /// No trusted public key is found for the requested host and port.
     NotFound,
-    /// The requested host is found in `~/.known_hosts`, but given the wrong public key.
+    /// Another public key is known for the requested host and port, but not the given key.
     KeyMismatch,
     /// The public key, certified public key, or certificate signing key is revoked
     /// for the requested host.
@@ -491,16 +727,15 @@ pub enum MatchResult {
     ///
     /// For now, there are no known critical options for host certificates.
     UnknownCriticalOptions,
-    /// The certificate is invalid.
+    /// The certificate could not be verified.
     ///
-    /// There are sereval possible reasons:
+    /// There are two possible reasons:
     ///
-    /// - The timestamp is invalid (expired or not yet valid).
-    /// - Either the payload or the signature is corrupted.
-    /// - The certificate type is not [`host`](russh::keys::ssh_key::certificate::CertType::Host).
-    /// - We encounter an error when we get the current Unix timestamp.
+    /// - The certificate type is not [host](russh::keys::ssh_key::certificate::CertType::Host).
     /// - No CAs matched the requested host.
-    /// - One or more CAs are found, but no one can verity the certificate.
+    ///
+    /// If a CA is found but the validation fails, then [`KnownHostsHandler::check_cert()`]
+    /// returns the result of checking the certified public key instead.
     CertNotVerified,
 }
 
@@ -511,6 +746,36 @@ impl MatchResult {
 }
 
 impl KnownHosts {
+    /// Parses the OpenSSH `known_hosts` entries from [`ssh_key::KnownHosts`].
+    ///
+    /// Invalid entries are ignored. Unmarked entries support `ssh-ed25519`,
+    /// `ecdsa-sha2-nistp521`, `ecdsa-sha2-nistp384`, and `ecdsa-sha2-nistp256`, plus RSA with the
+    /// crate's `rsa` feature. Other unmarked public keys are ignored. `@cert-authority` and
+    /// `@revoked` entries are retained regardless of the public key algorithm.
+    /// Enabling `russh/rsa` alone does not enable this crate's RSA support.
+    ///
+    /// It retains the host patterns and hashed host names as parsed, without converting them to
+    /// [ASCII lowercase](str::to_ascii_lowercase()). See [`KnownHostsHandler`] for their matching
+    /// behavior.
+    ///
+    /// ```no_run
+    /// use openrussh_client::known_hosts::{KnownHosts, MatchResult};
+    /// use russh::keys::{PublicKey, ssh_key};
+    ///
+    /// let key = "ssh-ed25519 XXXXXXXXXX";
+    /// let known_hosts = format!("my-host {key}");
+    /// let known_hosts = KnownHosts::new(ssh_key::KnownHosts::new(&known_hosts));
+    /// let public_key = PublicKey::from_openssh(key).unwrap();
+    ///
+    /// let handler = known_hosts.handler("my-host", 22);
+    /// assert_eq!(handler.check_public_key(&public_key), MatchResult::Found);
+    ///
+    /// let handler = known_hosts.handler("my-host", 2222);
+    /// assert_eq!(handler.check_public_key(&public_key), MatchResult::NotFound);
+    ///
+    /// let handler = known_hosts.handler("other-host", 22);
+    /// assert_eq!(handler.check_public_key(&public_key), MatchResult::NotFound);
+    /// ```
     pub fn new(known_hosts: ssh_key::KnownHosts) -> Self {
         use ssh_key::known_hosts::Entry;
 
@@ -573,15 +838,23 @@ impl KnownHosts {
         }
     }
 
+    /// Parses the OpenSSH `known_hosts` entries. Equivalent to
+    /// [`Self::new(ssh_key::KnownHosts::new(known_hosts))`](Self::new()).
     pub fn parse(known_hosts: &str) -> Self {
         Self::new(ssh_key::KnownHosts::new(known_hosts))
     }
 
+    /// Parses the OpenSSH `known_hosts` entries. Equivalent to
+    /// [`Self::parse(std::fs::read_to_string(known_hosts))`](Self::parse()).
     pub fn parse_path(known_hosts: impl AsRef<Path>) -> Result<Self, IoError> {
         let known_hosts = std::fs::read_to_string(known_hosts)?;
         Ok(Self::parse(&known_hosts))
     }
 
+    /// Parses the OpenSSH `known_hosts` entries. Equivalent to
+    /// [`Self::parse_path(DEFAULT_PATH)`](Self::parse_path()).
+    /// `DEFAULT_PATH` points to `~/.ssh/known_hosts` (if `std::env::home_dir()` returns `Some`)
+    /// or `/etc/ssh/ssh_known_hosts` otherwise.
     pub fn parse_default_path() -> Result<Self, IoError> {
         let known_hosts = if let Some(mut home) = std::env::home_dir() {
             home.push(".ssh/known_hosts");
@@ -593,15 +866,22 @@ impl KnownHosts {
         Self::parse_path(known_hosts)
     }
 
+    /// Alias to [`KnownHostsHandler::new()`].
     pub fn handler(&self, host: &str, port: u16) -> KnownHostsHandler {
         KnownHostsHandler::new(self, host, port)
     }
 
+    /// Returns the preferred algorithms for host certificates.
+    ///
+    /// It returns `ssh-ed25519`, `ecdsa-sha2-nistp521`, `ecdsa-sha2-nistp384`, and
+    /// `ecdsa-sha2-nistp256`, in this order, followed by `rsa-sha2-512` and `rsa-sha2-256` when
+    /// the `rsa` feature is enbaled. This preference is independent of the parsed entries and
+    /// requested host.
     pub const fn preferred_cert_alg() -> &'static [Algorithm] {
         const PREFERRED: &[Algorithm] = &[
             SigAlg::Ed25519.to_alg(),
             SigAlg::EcdsaSha2NistP521.to_alg(),
-            SigAlg::EcdsaSha2NistP256.to_alg(),
+            SigAlg::EcdsaSha2NistP384.to_alg(),
             SigAlg::EcdsaSha2NistP256.to_alg(),
             #[cfg(feature = "rsa")]
             SigAlg::RsaSha512.to_alg(),
