@@ -127,9 +127,49 @@ impl<'a> Target<'a> {
     ///   with the path component `~user/`. Otherwise they are ignored.
     /// - Resolving the `ProxyJump` chain by recursively querying the OpenSSH config.
     ///   It does not check `ProxyCommand`.
+    ///
+    /// This method returns an `Err` if any of [`Host::parse_openssh()`] calls return an `Err`.
+    ///
+    /// ```
+    /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
+    /// use openrussh_client::config::Target;
+    /// use std::io::BufReader;
+    ///
+    /// let ssh_config = r#"
+    /// Host host1
+    /// Host host2
+    ///   ProxyJump host1
+    /// Host host3
+    ///   ProxyJump host2
+    /// "#;
+    /// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
+    /// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
+    ///
+    /// let target = Target::parse("host1");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// assert_eq!(chain.target.dest.name, "host1");
+    /// assert!(chain.bastions.is_none());
+    ///
+    /// let target = Target::parse("host2");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// assert_eq!(chain.target.dest.name, "host2");
+    /// assert!(chain.bastions.is_some_and(|v| {
+    ///     v.len() == 1
+    ///         && v[0].dest.name == "host1"
+    /// }));
+    ///
+    /// let target = Target::parse("host3");
+    /// let chain = target.query(&ssh_config).unwrap();
+    /// assert_eq!(chain.target.dest.name, "host3");
+    /// assert!(chain.bastions.is_some_and(|v| {
+    ///     v.len() == 2
+    ///         && v[0].dest.name == "host2"
+    ///         && v[1].dest.name == "host1"
+    /// }));
+    /// ```
     #[cfg(feature = "config-parser")]
     pub fn query(self, conf: &OpenSshConfig) -> Result<Chain, Error> {
-        Chain::new(self, conf)
+        parsers::parse_config(self, conf)
     }
 }
 
@@ -142,6 +182,36 @@ pub struct Dest {
     pub port: u16,
     /// Corresponds to the `User` directive.
     pub user: String,
+}
+
+#[cfg(feature = "config-parser")]
+impl Dest {
+    /// Parses the OpenSSH parameters. See also [`Target::query()`].
+    ///
+    /// It returns [`Error::UserNotFound`] if [`whoami::username()`] fails.
+    ///
+    /// Side effects that mutate `conf`:
+    ///
+    /// - [Take](Option::take()) the ownership of [`host_name`](OpenSshHost::host_name).
+    /// - [Take](Option::take()) the ownership of [`user`](OpenSshHost::user).
+    ///
+    /// ```
+    /// use openrussh_client::config::{Dest, Target};
+    /// use ssh2_config::{DefaultAlgorithms, HostParams};
+    ///
+    /// let target = Target::parse("my-host");
+    ///
+    /// let mut conf = HostParams::new(&DefaultAlgorithms::empty());
+    /// conf.user = Some("me".to_owned());
+    /// let dest = Dest::parse_openssh(&mut conf, target).unwrap();
+    ///
+    /// assert_eq!(dest.name, "my-host");
+    /// assert_eq!(dest.port, 22);
+    /// assert_eq!(dest.user, "me");
+    /// ```
+    pub fn parse_openssh(conf: &mut OpenSshHost, target: Target<'_>) -> Result<Self, Error> {
+        parsers::parse_dest(conf, target)
+    }
 }
 
 /// Represents the authentication methods that the client will try.
@@ -171,6 +241,37 @@ impl Default for Auth {
             identities_only: false,
             includes_none: true,
         }
+    }
+}
+
+#[cfg(feature = "config-parser")]
+impl Auth {
+    /// Parses the OpenSSH parameters. See also [`Target::query()`].
+    ///
+    /// Side effects that mutate `conf`:
+    ///
+    /// - [Take](Option::take()) the ownership of [`identity_file`](OpenSshHost::identity_file).
+    /// - [Take](Option::take()) the ownership of [`certificate_file`](OpenSshHost::certificate_file).
+    /// - [Remove](std::collections::HashMap::remove()) the `IdentityAgent` from
+    ///   [`unsupported_fields`](OpenSshHost::unsupported_fields).
+    ///
+    /// ```
+    /// use openrussh_client::config::{Auth, Target};
+    /// use ssh2_config::{DefaultAlgorithms, HostParams};
+    /// use std::path::Path;
+    ///
+    /// let test_id = Path::new("your/own/id_ed25519");
+    ///
+    /// let mut conf = HostParams::new(&DefaultAlgorithms::empty());
+    /// conf.identity_file = Some(vec![test_id.to_path_buf()]);
+    /// let auth = Auth::parse_openssh(&mut conf);
+    ///
+    /// assert_eq!(auth.identities, Some(vec![test_id.to_path_buf()]));
+    /// assert!(auth.cert.is_none());
+    /// assert!(!auth.identities_only);
+    /// ```
+    pub fn parse_openssh(conf: &mut OpenSshHost) -> Self {
+        parsers::parse_auth(conf)
     }
 }
 
@@ -217,6 +318,29 @@ impl RequestTty {
             Self::ForShell
         }
     }
+
+    /// Parses the OpenSSH parameters. See also [`Target::query()`].
+    ///
+    /// No side effects that mutate `conf`:
+    ///
+    /// ```
+    /// use openrussh_client::config::{RequestTty, Target};
+    /// use ssh2_config::{DefaultAlgorithms, HostParams};
+    ///
+    /// let directive = "RequestTTY";
+    ///
+    /// let mut conf = HostParams::new(&DefaultAlgorithms::empty());
+    /// conf.unsupported_fields.insert(
+    ///     directive.to_ascii_lowercase(),
+    ///     vec!["yes".to_owned()]
+    /// );
+    /// let tty = RequestTty::parse_openssh(&mut conf);
+    ///
+    /// assert_eq!(tty, RequestTty::IfTty);
+    /// ```
+    pub fn parse_openssh(conf: &mut OpenSshHost) -> Self {
+        parsers::parse_tty(conf)
+    }
 }
 
 /// Represents a configuration for a server, both the final target and bastions.
@@ -225,6 +349,38 @@ pub struct Host {
     pub dest: Dest,
     pub auth: Auth,
     pub tty: RequestTty,
+}
+
+#[cfg(feature = "config-parser")]
+impl Host {
+    /// Parses the OpenSSH parameters. See also [`Target::query()`].
+    ///
+    /// See [`Dest::parse_openssh()`], [`Auth::parse_openssh()`], and
+    /// [`RequestTty::parse_openssh()`] for the side effects on `conf`.
+    ///
+    /// ```
+    /// use openrussh_client::config::{Host, Target};
+    /// use ssh2_config::{DefaultAlgorithms, HostParams};
+    /// use std::path::Path;
+    ///
+    /// let target = Target::parse("my-host");
+    ///
+    /// let test_id = Path::new("your/own/id_ed25519");
+    ///
+    /// let mut conf = HostParams::new(&DefaultAlgorithms::empty());
+    /// conf.user = Some("me".to_owned());
+    /// conf.identity_file = Some(vec![test_id.to_path_buf()]);
+    /// let host = Host::parse_openssh(&mut conf, target).unwrap();
+    ///
+    /// assert_eq!(host.dest.name, "my-host");
+    /// assert_eq!(host.dest.port, 22);
+    /// assert_eq!(host.dest.user, "me");
+    ///
+    /// assert_eq!(host.auth.identities, Some(vec![test_id.to_path_buf()]));
+    /// ```
+    pub fn parse_openssh(conf: &mut OpenSshHost, target: Target<'_>) -> Result<Self, Error> {
+        parsers::parse_host(conf, target)
+    }
 }
 
 /// Bastion chain, from the local server to the target server.
@@ -376,48 +532,10 @@ pub struct Chain {
 }
 
 impl Chain {
-    /// Queries and resolves the OpenSSH config. Read [`Target::query()`] for more information.
-    ///
-    /// ```
-    /// use openrussh_client::ssh2_config::{ParseRule, SshConfig};
-    /// use openrussh_client::config::Target;
-    /// use std::io::BufReader;
-    ///
-    /// let ssh_config = r#"
-    /// Host host1
-    /// Host host2
-    ///   ProxyJump host1
-    /// Host host3
-    ///   ProxyJump host2
-    /// "#;
-    /// let ssh_config = SshConfig::default().parse(&mut BufReader::new(ssh_config.as_bytes()),
-    /// ParseRule::ALLOW_UNSUPPORTED_FIELDS).unwrap();
-    ///
-    /// let target = Target::parse("host1");
-    /// let chain = target.query(&ssh_config).unwrap();
-    /// assert_eq!(chain.target.dest.name, "host1");
-    /// assert!(chain.bastions.is_none());
-    ///
-    /// let target = Target::parse("host2");
-    /// let chain = target.query(&ssh_config).unwrap();
-    /// assert_eq!(chain.target.dest.name, "host2");
-    /// assert!(chain.bastions.is_some_and(|v| {
-    ///     v.len() == 1
-    ///         && v[0].dest.name == "host1"
-    /// }));
-    ///
-    /// let target = Target::parse("host3");
-    /// let chain = target.query(&ssh_config).unwrap();
-    /// assert_eq!(chain.target.dest.name, "host3");
-    /// assert!(chain.bastions.is_some_and(|v| {
-    ///     v.len() == 2
-    ///         && v[0].dest.name == "host2"
-    ///         && v[1].dest.name == "host1"
-    /// }));
-    /// ```
+    /// Queries and resolves the OpenSSH config. Alias to [`Target::query()`].
     #[cfg(feature = "config-parser")]
     pub fn new(target: Target<'_>, conf: &OpenSshConfig) -> Result<Self, Error> {
-        resolve_config(target, conf)
+        target.query(conf)
     }
 
     /// Iterates over the bastions.
@@ -597,160 +715,162 @@ impl ExactSizeIterator for BastionIter<'_> {
 }
 
 #[cfg(feature = "config-parser")]
-fn resolve_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Error> {
-    let mut target_params = conf.query(target.host);
-    let target_host = query(&mut target_params, target)?;
+mod parsers {
+    use super::*;
 
-    let mut proxy_jump = target_params.proxy_jump.take();
+    pub(super) fn parse_config(target: Target<'_>, conf: &OpenSshConfig) -> Result<Chain, Error> {
+        let mut target_params = conf.query(target.host);
+        let target_host = parse_host(&mut target_params, target)?;
 
-    let mut bastions: Option<Vec<Host>> = None;
+        let mut proxy_jump = target_params.proxy_jump.take();
 
-    loop {
-        if let Some(inner) = proxy_jump
-            && let Some((first_bastion, rest)) = inner.split_first()
-        {
-            let bastions = if let Some(bastions) = bastions.as_mut() {
-                bastions.reserve(rest.len() + 1);
-                bastions
-            } else {
-                bastions.insert(Vec::with_capacity(rest.len() + 1))
-            };
+        let mut bastions: Option<Vec<Host>> = None;
 
-            for bastion in rest.iter().rev() {
-                let target = Target::parse(bastion);
-                let mut params = conf.query(target.host);
-                let host = query(&mut params, target)?;
-                bastions.push(host);
-            }
+        loop {
+            if let Some(inner) = proxy_jump
+                && let Some((first_bastion, rest)) = inner.split_first()
+            {
+                let bastions = if let Some(bastions) = bastions.as_mut() {
+                    bastions.reserve(rest.len() + 1);
+                    bastions
+                } else {
+                    bastions.insert(Vec::with_capacity(rest.len() + 1))
+                };
 
-            let target = Target::parse(first_bastion);
-            let mut params = conf.query(target.host);
-            let host = query(&mut params, target)?;
-            bastions.push(host);
-
-            proxy_jump = params.proxy_jump.take();
-        } else {
-            return Ok(Chain {
-                target: target_host,
-                bastions: bastions.map(|bastions| bastions.into_boxed_slice()),
-            });
-        }
-    }
-}
-
-#[cfg(feature = "config-parser")]
-fn query(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
-    let name = params
-        .host_name
-        .take()
-        .unwrap_or_else(|| target.host.to_owned());
-    let port = params.port.unwrap_or_else(|| target.port.unwrap_or(22));
-    let user = if let Some(user) = params.user.take() {
-        user
-    } else if let Some(user) = target.user {
-        user.to_owned()
-    } else {
-        whoami::username().map_err(Error::UserNotFound)?
-    };
-
-    let auth = parse_auth_methods(params);
-
-    let tty = parse_tty(params);
-
-    Ok(Host {
-        dest: Dest { name, port, user },
-        auth,
-        tty,
-    })
-}
-
-#[cfg(feature = "config-parser")]
-fn parse_auth_methods(conf: &mut OpenSshHost) -> Auth {
-    fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
-        use std::path::Component;
-
-        let mut it = path.components();
-        match it.next() {
-            Some(Component::Normal(first)) => {
-                if first != "~" {
-                    let bytes = first.as_encoded_bytes();
-                    let user = match bytes.first().copied() {
-                        Some(b'~') => first.to_str().and_then(|s| s.strip_prefix('~')),
-                        Some(_) => return Some(path),
-                        None => return None,
-                    };
-                    if user.is_none_or(|user| {
-                        if let Ok(me) = whoami::username() {
-                            user != me
-                        } else {
-                            true
-                        }
-                    }) {
-                        return None;
-                    }
+                for bastion in rest.iter().rev() {
+                    let target = Target::parse(bastion);
+                    let mut params = conf.query(target.host);
+                    let host = parse_host(&mut params, target)?;
+                    bastions.push(host);
                 }
 
-                let mut expanded = std::env::home_dir()?;
-                expanded.push(it.as_path());
+                let target = Target::parse(first_bastion);
+                let mut params = conf.query(target.host);
+                let host = parse_host(&mut params, target)?;
+                bastions.push(host);
 
-                Some(expanded)
+                proxy_jump = params.proxy_jump.take();
+            } else {
+                return Ok(Chain {
+                    target: target_host,
+                    bastions: bastions.map(|bastions| bastions.into_boxed_slice()),
+                });
             }
-            Some(_) => Some(path),
-            None => None,
         }
     }
 
-    fn agent_from_env(env: &str) -> Option<PathBuf> {
-        std::env::var_os(env).and_then(|value| expand_tilde(value.into()))
+    pub(super) fn parse_host(params: &mut OpenSshHost, target: Target<'_>) -> Result<Host, Error> {
+        let dest = parse_dest(params, target)?;
+        let auth = parse_auth(params);
+
+        let tty = parse_tty(params);
+
+        Ok(Host { dest, auth, tty })
     }
 
-    fn parse_agent(value: String) -> Option<PathBuf> {
-        if value == "none" {
-            None
-        } else if value == AGENT_ENV {
-            agent_from_env(AGENT_ENV)
-        } else if let Some(env_key) = value.strip_prefix('$') {
-            agent_from_env(env_key)
+    pub(super) fn parse_dest(conf: &mut OpenSshHost, target: Target<'_>) -> Result<Dest, Error> {
+        let name = conf
+            .host_name
+            .take()
+            .unwrap_or_else(|| target.host.to_owned());
+        let port = conf.port.unwrap_or_else(|| target.port.unwrap_or(22));
+        let user = if let Some(user) = conf.user.take() {
+            user
+        } else if let Some(user) = target.user {
+            user.to_owned()
         } else {
-            expand_tilde(value.into())
+            whoami::username().map_err(Error::UserNotFound)?
+        };
+
+        Ok(Dest { name, port, user })
+    }
+
+    pub(super) fn parse_auth(conf: &mut OpenSshHost) -> Auth {
+        fn expand_tilde(path: PathBuf) -> Option<PathBuf> {
+            use std::path::Component;
+
+            let mut it = path.components();
+            match it.next() {
+                Some(Component::Normal(first)) => {
+                    if first != "~" {
+                        let bytes = first.as_encoded_bytes();
+                        let user = match bytes.first().copied() {
+                            Some(b'~') => first.to_str().and_then(|s| s.strip_prefix('~')),
+                            Some(_) => return Some(path),
+                            None => return None,
+                        };
+                        if user.is_none_or(|user| {
+                            if let Ok(me) = whoami::username() {
+                                user != me
+                            } else {
+                                true
+                            }
+                        }) {
+                            return None;
+                        }
+                    }
+
+                    let mut expanded = std::env::home_dir()?;
+                    expanded.push(it.as_path());
+
+                    Some(expanded)
+                }
+                Some(_) => Some(path),
+                None => None,
+            }
+        }
+
+        fn agent_from_env(env: &str) -> Option<PathBuf> {
+            std::env::var_os(env).and_then(|value| expand_tilde(value.into()))
+        }
+
+        fn parse_agent(value: String) -> Option<PathBuf> {
+            if value == "none" {
+                None
+            } else if value == AGENT_ENV {
+                agent_from_env(AGENT_ENV)
+            } else if let Some(env_key) = value.strip_prefix('$') {
+                agent_from_env(env_key)
+            } else {
+                expand_tilde(value.into())
+            }
+        }
+
+        let identities = conf
+            .identity_file
+            .take()
+            .map(|v| v.into_iter().filter_map(expand_tilde).collect::<Vec<_>>());
+
+        let cert = conf.certificate_file.take().and_then(expand_tilde);
+
+        let agent = conf
+            .unsupported_fields
+            .remove("identityagent")
+            .and_then(|mut v| (!v.is_empty()).then(|| v.swap_remove(0)))
+            .and_then(parse_agent)
+            .or_else(|| agent_from_env(AGENT_ENV));
+
+        let identities_only = conf
+            .unsupported_fields
+            .get("identitiesonly")
+            .is_some_and(|v| v.first().is_some_and(|v| v == "yes"));
+
+        Auth {
+            identities,
+            cert,
+            agent,
+            identities_only,
+            includes_none: true,
         }
     }
 
-    let identities = conf
-        .identity_file
-        .take()
-        .map(|v| v.into_iter().filter_map(expand_tilde).collect::<Vec<_>>());
-
-    let cert = conf.certificate_file.take().and_then(expand_tilde);
-
-    let agent = conf
-        .unsupported_fields
-        .remove("identityagent")
-        .and_then(|mut v| (!v.is_empty()).then(|| v.swap_remove(0)))
-        .and_then(parse_agent)
-        .or_else(|| agent_from_env(AGENT_ENV));
-
-    let identities_only = conf
-        .unsupported_fields
-        .get("identitiesonly")
-        .is_some_and(|v| v.first().is_some_and(|v| v == "yes"));
-
-    Auth {
-        identities,
-        cert,
-        agent,
-        identities_only,
-        includes_none: true,
+    pub(super) fn parse_tty(conf: &mut OpenSshHost) -> RequestTty {
+        conf.unsupported_fields
+            .get("requesttty")
+            .and_then(|v| v.first())
+            .map(|s| RequestTty::from_str(s))
+            .unwrap_or_default()
     }
-}
-
-#[cfg(feature = "config-parser")]
-fn parse_tty(conf: &mut OpenSshHost) -> RequestTty {
-    conf.unsupported_fields
-        .get("requesttty")
-        .and_then(|v| v.first())
-        .map(|s| RequestTty::from_str(s))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -820,7 +940,7 @@ mod tests {
         let target = Target::parse(host);
         let conf = openssh_config(conf);
         let mut params = conf.query(target.host);
-        let res = query(&mut params, target);
+        let res = parsers::parse_host(&mut params, target);
         assert!(
             res.is_ok(),
             "could not resolve OpenSSH host for {host:?}: {res:?}"
