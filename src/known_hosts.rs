@@ -108,8 +108,8 @@ fn digest(key: &KeyData) -> Digest {
 /// # }
 /// ```
 pub struct KnownHostsHandler {
-    trusted: Option<Arc<[PreparedEntry]>>,
-    revoked: Option<Arc<[PreparedEntry]>>,
+    trusted: Option<Arc<Box<[PreparedEntry]>>>,
+    revoked: Option<Arc<Box<[PreparedEntry]>>>,
     host: String,
     port: u16,
 }
@@ -506,7 +506,7 @@ struct TrustedIter<'k> {
 }
 
 impl<'k> TrustedIter<'k> {
-    fn from(trusted: &'k Option<Arc<[PreparedEntry]>>) -> Self {
+    fn from(trusted: &'k Option<Arc<Box<[PreparedEntry]>>>) -> Self {
         Self {
             inner: trusted.as_ref().map(|entries| entries.iter()),
         }
@@ -705,8 +705,8 @@ impl Handler for KnownHostsHandler {
 /// ```
 #[derive(Debug, Clone)]
 pub struct KnownHosts {
-    trusted: Option<Arc<[PreparedEntry]>>,
-    revoked: Option<Arc<[PreparedEntry]>>,
+    trusted: Option<Arc<Box<[PreparedEntry]>>>,
+    revoked: Option<Arc<Box<[PreparedEntry]>>>,
 }
 
 /// Result of checking a public key or certificate against the [`KnownHosts`].
@@ -833,8 +833,8 @@ impl KnownHosts {
         }
 
         Self {
-            trusted: trusted.map(Into::into),
-            revoked: revoked.map(Into::into),
+            trusted: trusted.map(|v| Arc::new(v.into_boxed_slice())),
+            revoked: revoked.map(|v| Arc::new(v.into_boxed_slice())),
         }
     }
 
