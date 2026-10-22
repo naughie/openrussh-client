@@ -13,7 +13,7 @@ categories = ["asynchronous", "authentication", "cryptography"]
 
 description = "Russh client wrapper with supporting OpenSSH files"
 
-exclude = ["/tests/", ".dockerignore"]
+exclude = ["/tests/", ".dockerignore", "/.github/"]
 
 [dependencies]
 russh = { version = "0.64", default-features = false }
