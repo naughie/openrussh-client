@@ -50,7 +50,7 @@ fn main() {
     use openrussh_client::process::{
         Chunk, Command,
         cmd::{Redirect, RedirectDup},
-        escape::ExpandCommand,
+        escape::{ExpandCommand, RawBytes},
         shell::Exit,
     };
 
@@ -72,6 +72,32 @@ fn main() {
 
         let output = child.wait_with_output().await;
         t::assert_cmd_output(output, "Hello World\n", "", Some(0), "echo")?;
+
+        t::finish(&conn).await?;
+
+        Ok(())
+    });
+
+    rt.register("raw byte encoding", async || {
+        let host = parse_target("bob-test", ["IdentityFile ~/.ssh/id_ed25519"])?;
+        let known_hosts = KnownHosts::parse_default_path()?;
+
+        let conn = Connection::connect(&host, known_hosts).await?;
+
+        let cmd = Command::new().prog("/bin/bash").arg("-s").complete(false);
+        let child = conn.exec(cmd).await?;
+        child
+            .write_stdin(
+                Command::new()
+                    .prog("echo")
+                    .arg(("Hello", RawBytes(" あいう "), "World"))
+                    .complete(false),
+            )
+            .await?;
+        child.eof().await?;
+
+        let output = child.wait_with_output().await;
+        t::assert_cmd_output(output, "Hello あいう World\n", "", Some(0), "echo")?;
 
         t::finish(&conn).await?;
 

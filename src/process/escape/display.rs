@@ -29,6 +29,15 @@ where
     }
 }
 
+impl<T> Arg for &Display<T>
+where
+    T: fmt::Display,
+{
+    fn write(self, escaper: &mut Escaper<'_>) {
+        escaper.escape_fmt(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::SurroundBy;

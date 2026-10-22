@@ -154,6 +154,7 @@
 //! Command arguments are automatically escaped by single quotes or double quotes, depending on the
 //! [content](process::Arg::need_double()).
 //! You can use raw strings (`&str`, `String`), primitive integers, boolean (`"true"` or `"false"`),
+//! slices, [`RawBytes`](process::escape::RawBytes) (`\x<hex>`-style encoding of strings),
 //! [`Display`](process::escape::Display) (the wrapper of std [`Display`](std::fmt::Display)),
 //! [`Concat`](process::escape::Concat) (string concatenation of [`Iterator`]),
 //! [`Env`](process::escape::Env) (shell variables `${FOO}`, either exported or not, uppercase or not), [`ExpandCommand`](process::escape::ExpandCommand) (expanding a command, `$( inner-command )`), and tuples of any of these types.

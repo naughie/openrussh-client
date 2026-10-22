@@ -24,6 +24,7 @@ mod concat;
 mod display;
 mod env;
 mod primitives;
+mod slice;
 mod str;
 mod tuple;
 
@@ -32,6 +33,7 @@ pub use cmd::ExpandCommandArg;
 pub use concat::Concat;
 pub use display::Display;
 pub use env::Env;
+pub use str::RawBytes;
 
 use std::fmt;
 

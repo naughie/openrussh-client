@@ -34,6 +34,16 @@ impl Arg for Env<'_> {
     }
 }
 
+impl Arg for &Env<'_> {
+    fn need_double() -> bool {
+        true
+    }
+
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <Env<'_> as Arg>::write(*self, escaper)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::SurroundBy;

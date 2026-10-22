@@ -31,6 +31,12 @@ impl Arg for u64 {
         escaper.write_raw(self.format_into(&mut buf));
     }
 }
+impl Arg for u128 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        let mut buf = core::fmt::NumBuffer::new();
+        escaper.write_raw(self.format_into(&mut buf));
+    }
+}
 impl Arg for usize {
     fn write(self, escaper: &mut Escaper<'_>) {
         let mut buf = core::fmt::NumBuffer::new();
@@ -62,10 +68,82 @@ impl Arg for i64 {
         escaper.write_raw(self.format_into(&mut buf));
     }
 }
+impl Arg for i128 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        let mut buf = core::fmt::NumBuffer::new();
+        escaper.write_raw(self.format_into(&mut buf));
+    }
+}
 impl Arg for isize {
     fn write(self, escaper: &mut Escaper<'_>) {
         let mut buf = core::fmt::NumBuffer::new();
         escaper.write_raw(self.format_into(&mut buf));
+    }
+}
+
+impl Arg for &bool {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &u8 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &u16 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &u32 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &u64 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &u128 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &usize {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &i8 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &i16 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &i32 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &i64 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &i128 {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
+    }
+}
+impl Arg for &isize {
+    fn write(self, escaper: &mut Escaper<'_>) {
+        <_ as Arg>::write(*self, escaper);
     }
 }
 
