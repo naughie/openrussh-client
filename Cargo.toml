@@ -1,6 +1,6 @@
 [package]
 name = "openrussh-client"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 
 authors = ["Masato Nakata <masaton@naughie.com>"]
@@ -32,7 +32,7 @@ terminal_size = { version = "0.4", optional = true }
 either = "1"
 
 [features]
-default = ["russh-default", "config-parser", "known-hosts", "process"]
+default = ["russh-default", "config-parser", "known-hosts", "local-stream-forwarding", "local-tcp-forwarding", "process"]
 
 russh-default = ["russh/aws-lc-rs", "russh/rsa", "russh/flate2"]
 
@@ -45,6 +45,8 @@ serde = ["russh/serde"]
 
 config-parser = ["dep:ssh2-config", "dep:whoami"]
 known-hosts = ["dep:glob", "dep:hmac", "dep:sha1"]
+local-stream-forwarding = []
+local-tcp-forwarding = []
 process = ["dep:bytes", "dep:libc", "dep:terminal_size"]
 
 [dev-dependencies]

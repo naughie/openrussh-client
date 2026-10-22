@@ -41,8 +41,6 @@ We do not support X11 forwarding and agent forwarding for the security reason.
 
 Plan to support:
 
-- Local port forwarding (OpenSSH's `-L` option)
-- Local socket forwarding (OpenSSH's `-L` option)
 - Remote port forwarding (OpenSSH's `-R` option)
 - Remote socket forwarding (OpenSSH's `-R` option)
 - Limited support for FIDO2

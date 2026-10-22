@@ -5,7 +5,7 @@ set -e
 __proj_id="openrussh-client"
 __openssh_version="1:10.0p1-7+deb13u4"
 __apt_snapshot="20261005T000000Z"
-__test_ids="agent-cert auth-no-cert cert process proxy-jump"
+__test_ids="agent-cert auth-no-cert cert local-forwarding process proxy-jump"
 
 __print_usage() {
     printf 'Usage: %s [test_id] [build|run]\n' "${__script}" >&2

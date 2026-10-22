@@ -279,6 +279,8 @@
 //! - **russh-default** (default: enabled): Enables the default feature flags of [`russh`]: `aws-lc-rs`, `rsa`, `flate2`.
 //! - **config-parser** (default: enabled): Exposes the functions to convert `~/.ssh/config`
 //!   to our [config types](crate::config).
+//! - **local-stream-forwarding** (default: enabled): Forwards a local stream (`AsyncRead + AsyncWrite`) or local UDS to the remote socket.
+//! - **local-tcp-forwarding** (default: enabled): Forwards a local TCP stream to the remote TCP socket.
 //! - **known-hosts** (default: enabled): Exposes the reader for `~/.ssh/known_hosts` and the associated [`Handler`](russh::client::Handler) implementation.
 //! - **process** (default: enabled): Defines the rich interface to send `exec`/`shell` requests.
 
@@ -295,6 +297,9 @@ pub mod known_hosts;
 
 #[cfg(feature = "process")]
 pub mod process;
+
+#[cfg(any(feature = "local-tcp-forwarding", feature = "local-stream-forwarding"))]
+pub mod local_forwarding;
 
 pub use russh;
 #[cfg(feature = "config-parser")]

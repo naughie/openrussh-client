@@ -8,4 +8,5 @@ t = { package = "tester", path = "./tester" }
 
 libtest-mimic = "0.8"
 openrussh-client = { path = ".." }
+reqwest = { version = "0.13", default-features = false }
 tokio = { version = "1", features = ["full"] }

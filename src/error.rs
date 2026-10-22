@@ -1,6 +1,8 @@
 pub use crate::auth::Error as AuthError;
 pub use crate::config::Error as ConfigParseError;
 pub use crate::connect::Error as ConnectError;
+#[cfg(any(feature = "local-tcp-forwarding", feature = "local-stream-forwarding"))]
+pub use crate::local_forwarding::Error as LocalForwardError;
 
 use russh::client::Handler;
 use std::error::Error as StdError;
@@ -125,6 +127,28 @@ where
             Self::ProxyJump(e) => Some(e),
             Self::MakeHandler(e) => Some(e),
             Self::AuthFailure => None,
+        }
+    }
+}
+
+#[cfg(any(feature = "local-tcp-forwarding", feature = "local-stream-forwarding"))]
+impl Display for LocalForwardError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OpenChannel(e) => write!(f, "Could not open a channel for local forwarding: {e}"),
+            Self::CopyBytes(e) => {
+                write!(f, "Could not forward the local socket to the server: {e}")
+            }
+        }
+    }
+}
+
+#[cfg(any(feature = "local-tcp-forwarding", feature = "local-stream-forwarding"))]
+impl StdError for LocalForwardError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::OpenChannel(e) => Some(e),
+            Self::CopyBytes(e) => Some(e),
         }
     }
 }
