@@ -48,16 +48,20 @@ fn parse_target<'a>(
     Ok(hosts)
 }
 
-// Stop forwarding if a request fails or the test times out.
-struct ForwardTask<T>(t::tokio::task::JoinHandle<T>);
+struct TaskGuard<T>(t::tokio::task::JoinHandle<T>);
 
-impl<T> Drop for ForwardTask<T> {
+impl<T> Drop for TaskGuard<T> {
     fn drop(&mut self) {
         self.0.abort();
     }
 }
 
 fn main() {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper::body::Bytes;
+    use hyper::client::conn::{http1, http2};
+    use hyper::{Request, StatusCode, Version, header};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
     use openrussh_client::connect::Connection;
     use openrussh_client::error::{LocalForwardError, RusshError};
     use openrussh_client::known_hosts::KnownHosts;
@@ -65,12 +69,16 @@ fn main() {
 
     use t::tokio;
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
-    use tokio::net::{TcpListener, UnixListener, UnixStream};
+    use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
     use tokio::time::{Duration, timeout};
+    use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, pem::PemObject as _};
+    use tokio_rustls::{TlsConnector, rustls};
+
+    use std::sync::Arc;
 
     let mut rt = t::runtime();
 
-    rt.register("TCP forwarding", async || {
+    rt.register("TCP forwarding with HTTP/1.1", async || {
         timeout(Duration::from_secs(30), async {
             let host = parse_target(
                 "bob-test",
@@ -80,7 +88,7 @@ fn main() {
             let conn = Connection::connect(&host, known_hosts).await?;
 
             let remote_host = std::env::var("MY_TCP_SERVER")?;
-            let remote_port = std::env::var("MY_TCP_SERVER_PORT")?.parse::<u16>()?;
+            let remote_port = std::env::var("MY_TCP_SERVER_PORT_1")?.parse::<u16>()?;
             let listener = TcpListener::bind("127.0.0.1:0").await?;
             let local_addr = listener.local_addr()?;
 
@@ -93,22 +101,141 @@ fn main() {
                         socket,
                     )
                     .await?;
-                let mut task = ForwardTask(forward.spawn_wait());
+                let mut task = TaskGuard(forward.spawn_wait());
                 (&mut task.0).await??;
                 Ok::<(), t::Error>(())
             };
 
             let request = async {
-                let client = reqwest::Client::builder().no_proxy().build()?;
-                let response = client
-                    .get(format!("http://{local_addr}/test"))
-                    .header(reqwest::header::HOST, &remote_host)
-                    .header(reqwest::header::CONNECTION, "close")
-                    .send()
-                    .await?;
+                let socket = TcpStream::connect(local_addr).await?;
+                let (mut sender, connection) = http1::handshake(TokioIo::new(socket)).await?;
+                let mut http_task = TaskGuard(tokio::spawn(connection));
+                let req = Request::builder()
+                    .uri("/test")
+                    .version(Version::HTTP_11)
+                    .header(header::HOST, &remote_host)
+                    .header(header::CONNECTION, "close")
+                    .body(Empty::<Bytes>::new())?;
+                let resp = sender.send_request(req).await?;
 
-                t::assert_eq(response.status(), reqwest::StatusCode::OK, "HTTP status")?;
-                t::assert_eq(response.text().await?, "Hello, TCP", "forwarded HTTP body")?;
+                t::assert_eq(resp.status(), StatusCode::OK, "HTTP status")?;
+                t::assert_eq(resp.version(), Version::HTTP_11, "HTTP version")?;
+                t::assert_eq(
+                    resp.into_body().collect().await?.to_bytes(),
+                    &b"Hello, HTTP/1.1"[..],
+                    "forwarded HTTP body",
+                )?;
+                drop(sender);
+                (&mut http_task.0).await??;
+                Ok::<(), t::Error>(())
+            };
+
+            tokio::try_join!(forward, request)?;
+            t::finish(&conn).await?;
+
+            Ok(())
+        })
+        .await?
+    });
+
+    rt.register("TCP forwarding with HTTP/2", async || {
+        timeout(Duration::from_secs(30), async {
+            let host = parse_target(
+                "bob-test",
+                ["IdentityFile ~/.ssh/id_ed25519", "IdentitiesOnly yes"],
+            )?;
+            let known_hosts = KnownHosts::parse_default_path()?;
+            let conn = Connection::connect(&host, known_hosts).await?;
+
+            let remote_host = std::env::var("MY_TCP_SERVER")?;
+            let remote_port = std::env::var("MY_TCP_SERVER_PORT_2")?.parse::<u16>()?;
+            let ca_cert_path = std::env::var("MY_TCP_SERVER_CA_CERT")?;
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(CertificateDer::from_pem_file(ca_cert_path)?)?;
+            let mut tls_config = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            tls_config.alpn_protocols = vec![b"h2".to_vec()];
+            let tls = TlsConnector::from(Arc::new(tls_config));
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let local_addr = listener.local_addr()?;
+
+            let forward = async {
+                let (socket, originator) = listener.accept().await?;
+                drop(listener);
+                let forward = conn
+                    .forward_local_tcp(
+                        (remote_host.clone(), remote_port).into(),
+                        Some(originator.into()),
+                        socket,
+                    )
+                    .await?;
+                let mut task = TaskGuard(forward.spawn_wait());
+                (&mut task.0).await??;
+                Ok::<(), t::Error>(())
+            };
+
+            let request = async {
+                let socket = TcpStream::connect(local_addr).await?;
+                let socket = tls
+                    .connect(ServerName::try_from(remote_host.clone())?, socket)
+                    .await?;
+                t::assert(
+                    socket.get_ref().1.alpn_protocol() == Some(b"h2"),
+                    "TLS negotiated HTTP/2",
+                )?;
+                let (mut sender, connection) = http2::Builder::new(TokioExecutor::new())
+                    .adaptive_window(false)
+                    .initial_stream_window_size(65_535)
+                    .initial_connection_window_size(1024 * 1024)
+                    .handshake(TokioIo::new(socket))
+                    .await?;
+                let mut http_task = TaskGuard(tokio::spawn(connection));
+                let base_url = format!("https://{remote_host}:{remote_port}");
+                let req1 = Request::builder()
+                    .uri(format!("{base_url}/download"))
+                    .version(Version::HTTP_2)
+                    .body(Empty::<Bytes>::new())?;
+
+                let req2 = Request::builder()
+                    .uri(format!("{base_url}/test"))
+                    .version(Version::HTTP_2)
+                    .body(Empty::<Bytes>::new())?;
+
+                let resp1 = sender.send_request(req1).await?;
+                t::assert_eq(resp1.status(), StatusCode::OK, "download status")?;
+                t::assert_eq(resp1.version(), Version::HTTP_2, "download version")?;
+                let mut download = resp1.into_body();
+
+                let mut downloaded = 0;
+                while let Some(frame) = download.frame().await {
+                    if let Ok(chunk) = frame?.into_data() {
+                        downloaded += chunk.len();
+                        if downloaded > 0 {
+                            break;
+                        }
+                    }
+                }
+                t::assert(downloaded > 0, "download started")?;
+
+                let resp2 = sender.send_request(req2).await?;
+                t::assert_eq(resp2.status(), StatusCode::OK, "HTTP status")?;
+                t::assert_eq(resp2.version(), Version::HTTP_2, "HTTP version")?;
+                t::assert_eq(
+                    resp2.into_body().collect().await?.to_bytes(),
+                    &b"Hello, HTTP/2"[..],
+                    "multiplexed HTTP body",
+                )?;
+
+                while let Some(frame) = download.frame().await {
+                    if let Ok(chunk) = frame?.into_data() {
+                        downloaded += chunk.len();
+                    }
+                }
+                t::assert_eq(downloaded, 256 * 1024, "forwarded download length")?;
+                drop(download);
+                drop(sender);
+                (&mut http_task.0).await??;
                 Ok::<(), t::Error>(())
             };
 
@@ -135,7 +262,7 @@ fn main() {
             let forward = async {
                 let (socket, originator) = listener.accept().await?;
                 let error = conn
-                    .forward_local_tcp(("127.0.0.1", 8889).into(), Some(originator.into()), socket)
+                    .forward_local_tcp(("127.0.0.1", 8880).into(), Some(originator.into()), socket)
                     .await
                     .err();
 
@@ -152,12 +279,18 @@ fn main() {
             };
 
             let request = async {
-                let client = reqwest::Client::builder().no_proxy().build()?;
-                let response = client
-                    .get(format!("http://{local_addr}/test"))
-                    .header(reqwest::header::CONNECTION, "close")
-                    .send()
-                    .await;
+                let response = async {
+                    let socket = TcpStream::connect(local_addr).await?;
+                    let (mut sender, connection) = http1::handshake(TokioIo::new(socket)).await?;
+                    let _http_task = TaskGuard(tokio::spawn(connection));
+                    let request = Request::builder()
+                        .uri("/test")
+                        .header(header::HOST, local_addr.to_string())
+                        .header(header::CONNECTION, "close")
+                        .body(Empty::<Bytes>::new())?;
+                    Ok::<_, t::Error>(sender.send_request(request).await?)
+                }
+                .await;
 
                 t::assert(response.is_err(), "connection refused")?;
                 Ok::<(), t::Error>(())
@@ -190,7 +323,7 @@ fn main() {
             let forward = async {
                 let (socket, _) = listener.accept().await?;
                 let forward = conn.forward_local_uds(remote_socket, socket).await?;
-                let mut task = ForwardTask(forward.spawn_wait());
+                let mut task = TaskGuard(forward.spawn_wait());
                 (&mut task.0).await??;
                 Ok::<(), t::Error>(())
             };

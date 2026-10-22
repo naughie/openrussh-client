@@ -4,7 +4,9 @@ set -eu
 /usr/sbin/sshd -e
 
 export MY_TCP_SERVER=tcp.test.openrussh
-export MY_TCP_SERVER_PORT=8888
+export MY_TCP_SERVER_PORT_1=8888
+export MY_TCP_SERVER_PORT_2=8889
+export MY_TCP_SERVER_CA_CERT=/opt/tests/tls/ca.crt
 export MY_SOCKET="/opt/tests/bob/uds.test.openrussh.sock"
 
 printf '127.0.0.1 %s\n' "$MY_TCP_SERVER" >> /etc/hosts
@@ -26,8 +28,13 @@ while [ ! -S "$MY_SOCKET" ]; do
     i=$((i + 1))
 done
 
-response="$(curl -fsS --noproxy '*' --max-time 5 \
-    "http://$MY_TCP_SERVER:$MY_TCP_SERVER_PORT/test")"
-test "$response" = 'Hello, TCP'
+response="$(curl -fsS --http1.1 --noproxy '*' --max-time 5 \
+    "http://$MY_TCP_SERVER:$MY_TCP_SERVER_PORT_1/test")"
+test "$response" = 'Hello, HTTP/1.1'
+
+response="$(curl -fsS --http2 --cacert "$MY_TCP_SERVER_CA_CERT" \
+    --noproxy '*' --max-time 5 \
+    "https://$MY_TCP_SERVER:$MY_TCP_SERVER_PORT_2/test")"
+test "$response" = 'Hello, HTTP/2'
 
 exec runuser -u alice -- "$@"
