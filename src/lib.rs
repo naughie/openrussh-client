@@ -208,7 +208,7 @@
 //! # }
 //! ```
 //!
-//! You can also send the shell request (though we do not support PTY yet):
+//! You can also send the shell request:
 //!
 //! ```
 //! # use openrussh_client::connect::Connection;
