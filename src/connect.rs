@@ -462,7 +462,7 @@ mod tests {
     use russh::{
         client,
         keys::{PrivateKey, PublicKey, PublicKeyOrCertificate},
-        server::{self, Auth},
+        server::{self, Auth, VerifiedPublicKey},
     };
     use tokio::net::{TcpListener, UnixStream};
     use tokio::task::JoinHandle;
@@ -558,8 +558,9 @@ mod tests {
         async fn auth_publickey(
             &mut self,
             user: &str,
-            public_key: &PublicKey,
+            public_key: VerifiedPublicKey<'_>,
         ) -> Result<Auth, Self::Error> {
+            let public_key = public_key.public_key;
             Ok(
                 if user == "alice" && public_key.key_data() == self.client_public_key.key_data() {
                     Auth::Accept

@@ -16,7 +16,7 @@ description = "Russh client wrapper with supporting OpenSSH files"
 exclude = ["/tests/", ".dockerignore", "/.github/"]
 
 [dependencies]
-russh = { version = "0.64", default-features = false }
+russh = { version = "0.65", default-features = false }
 ssh2-config = { version = "0.9", optional = true }
 tokio = { version = "1", features = ["io-util", "net"] }
 whoami = { version = "2.1", optional = true }
