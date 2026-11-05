@@ -26,7 +26,8 @@ FROM debian:13.7-slim
 ARG OPENSSH_VERSION
 ARG APT_SNAPSHOT
 
-RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+RUN printf '%s\n' 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
     && printf '%s\n' \
        "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${APT_SNAPSHOT}/ trixie main" \
        "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${APT_SNAPSHOT}/ trixie-security main" \
